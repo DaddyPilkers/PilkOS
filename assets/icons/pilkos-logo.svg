@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="PilkOS logo: a glass half full of milk">
+  <defs>
+    <linearGradient id="pilkStroke" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6bc5f0" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#4a9fd1" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="glassFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.60"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.00"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Glass body (tapered tumbler) -->
+  <path d="M32 32 H88 L80 98 H40 Z"
+        fill="url(#glassFill)"
+        stroke="url(#pilkStroke)"
+        stroke-width="3"
+        stroke-linejoin="round"/>
+
+  <!-- Rim hint -->
+  <path d="M32 32 C40 26 80 26 88 32"
+        fill="none"
+        stroke="url(#pilkStroke)"
+        stroke-width="3"
+        stroke-linecap="round"
+        opacity="0.9"/>
+
+  <!-- Milk (half full) -->
+  <path d="M36.5 66 H83.5 L79 96 H41 Z"
+        fill="#f3e2c7"
+        opacity="0.92"/>
+  <path d="M36.5 66 C48 62.5 72 62.5 83.5 66"
+        fill="none"
+        stroke="#ead2ad"
+        stroke-width="2"
+        stroke-linecap="round"
+        opacity="0.65"/>
+
+  <!-- Milk bubbles -->
+  <circle cx="53" cy="74" r="2.2" fill="#f7ead6" opacity="0.55"/>
+  <circle cx="69" cy="80" r="1.7" fill="#f7ead6" opacity="0.45"/>
+  <circle cx="61" cy="88" r="1.4" fill="#f7ead6" opacity="0.40"/>
+
+  <!-- Glass shine -->
+  <path d="M39 38 C40 52 42 74 44 96"
+        fill="none"
+        stroke="url(#shine)"
+        stroke-width="4"
+        stroke-linecap="round"
+        opacity="0.9"/>
+</svg>

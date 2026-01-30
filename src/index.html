@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PilkOS v0.1.3</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/icons/pilkos-logo.svg">
+    <link rel="icon" href="../assets/icons/pilkos-logo.svg">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="boot-screen" id="boot-screen">
+        <div class="boot-content" role="status" aria-live="polite" aria-label="Booting PilkOS">
+            <img class="boot-logo" src="../assets/icons/pilkos-logo.svg" alt="PilkOS logo" width="96" height="96">
+            <div class="boot-title">PilkOS</div>
+            <div class="boot-subtitle">Starting Up</div>
+            <div class="boot-progress" aria-hidden="true">
+                <div class="boot-progress-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="login-screen hidden" id="login-screen" style="display: none;">
+        <div class="window login-window" role="dialog" aria-label="Sign in">
+            <div class="window-header login-window-header">
+                <div class="window-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                        <line x1="12" y1="2" x2="12" y2="12"></line>
+                    </svg>
+                    Sign in
+                </div>
+                <div class="window-controls" aria-hidden="true"></div>
+            </div>
+
+            <div class="window-content login-window-content">
+                <div class="login-container">
+                    <div class="login-header">
+                        <div class="login-logo">
+                            <img src="../assets/icons/pilkos-logo.svg" alt="PilkOS logo" width="80" height="80">
+                        </div>
+                        <h1 class="login-title">PilkOS</h1>
+                    </div>
+                    
+                    <div class="login-users" id="login-users">
+                    </div>
+                    
+                    <div class="login-password-container" id="login-password-container" style="display: none;">
+                        <div class="login-selected-user" id="login-selected-user">
+                        </div>
+                        <div class="login-password-input-container">
+                            <div class="login-password-field">
+                                <input type="password" id="login-password" class="login-password-input" placeholder="Enter password" autocomplete="off">
+                                <button type="button" class="login-password-toggle" id="login-password-toggle" aria-label="Show password" title="Show password">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                                    </svg>
+                                </button>
+                            </div>
+                            <button class="login-submit-btn" id="login-submit-btn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="9 18 15 12 9 6"></polyline>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="login-error" id="login-error" style="display: none;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                            <span>Incorrect password. Please try again.</span>
+                        </div>
+                        <button class="login-back-btn" id="login-back-btn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="15 18 9 12 15 6"></polyline>
+                            </svg>
+                            Back
+                        </button>
+                    </div>
+
+                    <div class="login-power-actions" aria-label="Power actions">
+                        <button class="login-power-btn" id="login-restart-btn" type="button" title="Restart" aria-label="Restart">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                        </button>
+                        <button class="login-power-btn login-power-btn-danger" id="login-shutdown-btn" type="button" title="Shutdown" aria-label="Shutdown">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                                <line x1="12" y1="2" x2="12" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="desktop" id="desktop" style="display: none;">
+        <div class="dock">
+            <div class="dock-search">
+                <div class="search-icon" id="search-icon">
+                    <img src="../assets/icons/pilkos-logo.svg" alt="PilkOS logo">
+                </div>
+                <div class="dock-divider" aria-hidden="true"></div>
+                <div class="dock-control-item dock-virtual-desktops" title="Virtual Desktops" aria-label="Virtual Desktops">
+                    <div class="dock-icon-small" id="virtual-desktops-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="3" y="9" width="14" height="11" rx="1"></rect>
+                            <rect x="7" y="3" width="14" height="11" rx="1"></rect>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="dock-apps">
+            </div>
+
+            <div class="dock-controls">
+                <div class="dock-control-item dock-quick-settings" title="Quick Settings" aria-label="Quick Settings">
+                    <div class="dock-icon-small" id="quick-settings-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="4" y1="6" x2="20" y2="6"></line>
+                            <circle cx="9" cy="6" r="2"></circle>
+                            <line x1="4" y1="12" x2="20" y2="12"></line>
+                            <circle cx="15" cy="12" r="2"></circle>
+                            <line x1="4" y1="18" x2="20" y2="18"></line>
+                            <circle cx="11" cy="18" r="2"></circle>
+                        </svg>
+                    </div>
+                </div>
+                <div class="dock-divider" aria-hidden="true"></div>
+                <div class="dock-control-item dock-weather">
+                    <div class="dock-icon-small" id="weather-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                        </svg>
+                    </div>
+                    <span class="dock-percent" id="weather-temp">-10° F</span>
+                </div>
+                <div class="dock-control-item dock-clock">
+                    <span class="clock-time" id="clock-time" aria-label="Clock"></span>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="windows-container"></div>
+        </div>
+
+        <div class="desktop-icons">
+        </div>
+
+        <div class="windows-container" id="windows-container"></div>
+
+        <div class="start-menu" id="start-menu">
+            <div class="start-menu-search-row">
+                <div class="start-menu-search">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" id="start-menu-search" autocomplete="off" spellcheck="false" aria-label="Search">
+                </div>
+                <div class="start-menu-power">
+                    <div class="power-menu-item" data-action="signout">
+                        <div class="power-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                        </div>
+                        <span class="power-menu-text">Log Out</span>
+                    </div>
+                    <div class="power-menu-item" data-action="restart">
+                        <div class="power-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                        </div>
+                        <span class="power-menu-text">Restart</span>
+                    </div>
+                    <div class="power-menu-item" data-action="shutdown">
+                        <div class="power-menu-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                                <line x1="12" y1="2" x2="12" y2="12"></line>
+                            </svg>
+                        </div>
+                        <span class="power-menu-text">Shutdown</span>
+                    </div>
+                </div>
+            </div>
+            <div class="start-menu-apps" id="start-menu-apps">
+            </div>
+            <div class="start-menu-search-results" id="start-menu-search-results"></div>
+            <div class="start-menu-empty" id="start-menu-empty">No matching apps or files</div>
+        </div>
+
+        <div class="context-menu" id="desktop-context-menu">
+            <div class="context-menu-item" data-action="new-file">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <path d="M14 2v6h6"></path>
+                        <path d="M12 18v-6"></path>
+                        <path d="M9 15h6"></path>
+                    </svg>
+                </div>
+                <span>New File</span>
+            </div>
+            <div class="context-menu-item" data-action="new-folder">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        <line x1="12" y1="11" x2="12" y2="17"></line>
+                        <line x1="9" y1="14" x2="15" y2="14"></line>
+                    </svg>
+                </div>
+                <span>New Folder</span>
+            </div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" data-action="icon-size-small">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="9" x2="15" y2="9"></line>
+                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                    </svg>
+                </div>
+                <span>Small Icons</span>
+                <span class="context-menu-check" style="display: none;">✓</span>
+            </div>
+            <div class="context-menu-item" data-action="icon-size-medium">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="9" x2="15" y2="9"></line>
+                        <line x1="9" y1="12" x2="15" y2="12"></line>
+                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                    </svg>
+                </div>
+                <span>Medium Icons</span>
+                <span class="context-menu-check" style="display: none;">✓</span>
+            </div>
+            <div class="context-menu-item" data-action="icon-size-large">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="9" x2="15" y2="9"></line>
+                        <line x1="9" y1="12" x2="15" y2="12"></line>
+                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                        <line x1="9" y1="18" x2="15" y2="18"></line>
+                    </svg>
+                </div>
+                <span>Large Icons</span>
+                <span class="context-menu-check" style="display: none;">✓</span>
+            </div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" data-action="toggle-icons">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                </div>
+                <span id="toggle-icons-text">Show Desktop Items</span>
+            </div>
+            <div class="context-menu-item" data-action="toggle-lock">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                </div>
+                <span id="toggle-lock-text">Lock Desktop Items</span>
+            </div>
+            <div class="context-menu-item" data-action="toggle-grid">
+                <div class="context-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                </div>
+                <span id="toggle-grid-text">Freeform Mode</span>
+            </div>
+        </div>
+
+        <div class="quick-settings-menu" id="quick-settings-menu" role="dialog" aria-label="Quick Settings">
+            <div class="quick-settings-view quick-settings-main-view" id="quick-settings-main-view">
+                <div class="quick-settings-header-row">
+                    <div class="quick-settings-header">Quick Settings</div>
+                    <div class="quick-settings-header-actions">
+                        <button class="quick-settings-edit-btn" id="quick-settings-edit-toggle" type="button" aria-label="Edit Quick Settings" aria-pressed="false">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                            </svg>
+                        </button>
+                        <button class="quick-settings-settings-btn" id="quick-settings-open-settings" type="button" aria-label="Open Settings">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .67.39 1.27 1 1.51H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="quick-settings-tiles">
+                    <div class="quick-settings-tile" id="quick-wifi-toggle" role="button" tabindex="0" aria-pressed="true" data-quick-tile="wifi">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M5 13a10 10 0 0 1 14 0"></path>
+                                <path d="M8.5 16.5a6 6 0 0 1 7 0"></path>
+                                <path d="M12 20h.01"></path>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Wi-Fi</div>
+                        <div class="quick-settings-tile-subtext" id="quick-wifi-status">Checking...</div>
+                        <button class="quick-settings-tile-chevron" id="quick-wifi-devices-toggle" type="button" aria-label="Wi-Fi Networks" aria-expanded="false">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="quick-settings-tile" id="quick-bluetooth-toggle" role="button" tabindex="0" aria-pressed="true" data-quick-tile="bluetooth">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6.5 6.5L17.5 17.5L12 23V1L17.5 6.5L6.5 17.5"></path>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Bluetooth</div>
+                        <div class="quick-settings-tile-subtext" id="quick-bluetooth-status">Checking...</div>
+                        <button class="quick-settings-tile-chevron" id="quick-bluetooth-devices-toggle" type="button" aria-label="Bluetooth Devices" aria-expanded="false">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="quick-settings-tile" id="quick-resolution-toggle" role="button" tabindex="0" data-quick-tile="resolution" data-quick-default-hidden="true">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="12" rx="2"></rect>
+                                <line x1="8" y1="20" x2="16" y2="20"></line>
+                                <line x1="12" y1="16" x2="12" y2="20"></line>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Screen Size</div>
+                        <div class="quick-settings-tile-subtext" id="quick-resolution-status">Auto</div>
+                        <button class="quick-settings-tile-chevron" id="quick-resolution-options-toggle" type="button" aria-label="Screen Resolutions" aria-expanded="false">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="quick-settings-tile quick-settings-tile-static" role="group" aria-label="Battery" data-quick-tile="battery">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="7" width="18" height="10" rx="2" ry="2"></rect>
+                                <line x1="22" y1="11" x2="22" y2="13"></line>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Battery <span class="quick-settings-label-sep">•</span> <span id="quick-battery-percent-label">--</span></div>
+                        <div class="quick-settings-tile-subtext"><span id="quick-battery-time">--</span></div>
+                        <button class="quick-settings-tile-chevron" id="quick-battery-plans-toggle" type="button" aria-label="Power Plans" aria-expanded="false">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                    <button class="quick-settings-tile" id="quick-airplane-toggle" type="button" aria-pressed="false" data-quick-tile="airplane">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V20l-2 1.5V23l3-1 3 1v-1.5L13 20v-6.5z"></path>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Airplane Mode</div>
+                        <div class="quick-settings-tile-subtext" id="quick-airplane-status">Off</div>
+                    </button>
+                </div>
+                <div class="quick-settings-edit-panel" id="quick-settings-edit-panel" aria-hidden="true">
+                    <div class="quick-settings-edit-available" id="quick-settings-edit-available"></div>
+                </div>
+                <div class="quick-settings-slider-row">
+                    <div class="quick-settings-slider">
+                        <input class="volume-slider quick-volume-slider" id="quick-volume-slider" type="range" min="0" max="100" value="70" aria-label="Volume">
+                        <div class="quick-volume-tooltip" id="quick-volume-tooltip" role="status" aria-live="polite"></div>
+                    </div>
+                    <button class="quick-settings-slider-icon quick-volume-mute" id="quick-volume-mute" type="button" aria-label="Mute" aria-pressed="false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19 5a7 7 0 0 1 0 14"></path>
+                            <path d="M15 9a3 3 0 0 1 0 6"></path>
+                        </svg>
+                    </button>
+                    <button class="quick-settings-devices-toggle" id="quick-audio-devices-toggle" type="button" aria-label="Audio Devices" aria-expanded="false">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="quick-settings-slider-value" id="quick-volume-value">70%</div>
+                </div>
+                <div class="quick-settings-slider-row quick-settings-brightness-row">
+                    <div class="quick-settings-slider">
+                        <input class="volume-slider quick-brightness-slider" id="quick-brightness-slider" type="range" min="0" max="100" value="80" aria-label="Brightness">
+                        <div class="quick-brightness-tooltip" id="quick-brightness-tooltip" role="status" aria-live="polite"></div>
+                    </div>
+                    <button class="quick-settings-brightness-btn" id="quick-night-light-button" type="button" aria-label="Night Light" aria-pressed="false">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                        </svg>
+                        <svg class="night-light-diagonal" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="position: absolute; display: none;" aria-hidden="true">
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                        </svg>
+                    </button>
+                    <button class="quick-settings-brightness-btn" id="quick-auto-brightness-button" type="button" aria-label="Auto Brightness" aria-pressed="false">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="5"></circle>
+                            <line x1="12" y1="1" x2="12" y2="3"></line>
+                            <line x1="12" y1="21" x2="12" y2="23"></line>
+                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                            <line x1="1" y1="12" x2="3" y2="12"></line>
+                            <line x1="21" y1="12" x2="23" y2="12"></line>
+                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                        </svg>
+                        <svg class="auto-brightness-diagonal" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="position: absolute; display: block;" aria-hidden="true">
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="quick-settings-view quick-settings-devices-view" id="quick-audio-view" aria-hidden="true">
+                <div class="quick-settings-subheader">
+                    <button class="quick-settings-back" id="quick-audio-back" type="button" aria-label="Back to Quick Settings">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="quick-settings-header">Audio Devices</div>
+                </div>
+                <label class="quick-audio-devices-label" for="quick-audio-output-device">Output Device</label>
+                <select class="quick-audio-devices-select" id="quick-audio-output-device">
+                    <option>Default Output Device</option>
+                    <option>Speakers</option>
+                    <option>Headphones</option>
+                </select>
+                <label class="quick-audio-devices-label" for="quick-audio-input-device">Input Device</label>
+                <select class="quick-audio-devices-select" id="quick-audio-input-device">
+                    <option>Default Input Device</option>
+                    <option>Microphone</option>
+                    <option>Headset Mic</option>
+                </select>
+            </div>
+            <div class="quick-settings-view quick-settings-devices-view" id="quick-wifi-view" aria-hidden="true">
+                <div class="quick-settings-subheader">
+                    <button class="quick-settings-back" id="quick-wifi-back" type="button" aria-label="Back to Quick Settings">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="quick-settings-header">Wi-Fi Networks</div>
+                </div>
+                <div class="quick-settings-list" id="quick-wifi-list"></div>
+            </div>
+            <div class="quick-settings-view quick-settings-devices-view" id="quick-bluetooth-view" aria-hidden="true">
+                <div class="quick-settings-subheader">
+                    <button class="quick-settings-back" id="quick-bluetooth-back" type="button" aria-label="Back to Quick Settings">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="quick-settings-header">Bluetooth Devices</div>
+                </div>
+                <div class="quick-settings-list" id="quick-bluetooth-list"></div>
+            </div>
+            <div class="quick-settings-view quick-settings-devices-view" id="quick-battery-view" aria-hidden="true">
+                <div class="quick-settings-subheader">
+                    <button class="quick-settings-back" id="quick-battery-back" type="button" aria-label="Back to Quick Settings">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="quick-settings-header">Power Plans</div>
+                </div>
+                <div class="quick-settings-power-plans">
+                    <button class="quick-settings-plan" data-plan="power-saving" type="button">Power Saving</button>
+                    <button class="quick-settings-plan" data-plan="balanced" type="button">Balanced</button>
+                    <button class="quick-settings-plan" data-plan="performance" type="button">Performance</button>
+                </div>
+            </div>
+            <div class="quick-settings-view quick-settings-devices-view" id="quick-resolution-view" aria-hidden="true">
+                <div class="quick-settings-subheader">
+                    <button class="quick-settings-back" id="quick-resolution-back" type="button" aria-label="Back to Quick Settings">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="quick-settings-header">Screen Size</div>
+                </div>
+                <div class="quick-settings-power-plans" id="quick-resolution-list">
+                    <button class="quick-settings-plan" data-resolution="auto" type="button">Auto (Fit Screen)</button>
+                    <button class="quick-settings-plan" data-resolution="1024x768" data-width="1024" data-height="768" type="button">1024 x 768</button>
+                    <button class="quick-settings-plan" data-resolution="1280x720" data-width="1280" data-height="720" type="button">1280 x 720</button>
+                    <button class="quick-settings-plan" data-resolution="1366x768" data-width="1366" data-height="768" type="button">1366 x 768</button>
+                    <button class="quick-settings-plan" data-resolution="1600x900" data-width="1600" data-height="900" type="button">1600 x 900</button>
+                    <button class="quick-settings-plan" data-resolution="1920x1080" data-width="1920" data-height="1080" type="button">1920 x 1080</button>
+                </div>
+            </div>
+        </div>
+
+    <script>
+        // Apply desktop/login background synchronously to prevent flicker
+        (function() {
+            const savedBackground = localStorage.getItem('desktopBackground') || 'default';
+            const customPath = localStorage.getItem('customBackgroundPath');
+            const style = document.createElement('style');
+            style.textContent = `
+                .desktop {
+                    background-size: cover !important;
+                    background-position: center !important;
+                    background-repeat: no-repeat !important;
+                    animation: none !important;
+                }
+                .login-screen {
+                    background-size: cover !important;
+                    background-position: center !important;
+                    background-repeat: no-repeat !important;
+                    animation: none !important;
+                }
+            `;
+            document.head.appendChild(style);
+            
+            // Wait for desktop/login elements to exist, then apply background
+            function applyBackgroundSync() {
+                const desktop = document.getElementById('desktop');
+                const loginScreen = document.getElementById('login-screen');
+
+                if (desktop || loginScreen) {
+                    const applyToEl = (el) => {
+                        if (!el) return;
+                        // If custom background, apply default first to prevent flicker, then it will be replaced async
+                        if (savedBackground && (savedBackground.startsWith('custom-') || savedBackground === 'custom')) {
+                            // Apply default background immediately as fallback
+                            el.style.backgroundImage = 'url("../assets/images/Peak.jpg")';
+                            el.style.background = 'url("../assets/images/Peak.jpg"), linear-gradient(135deg, #2d3a4e 0%, #3a4a5e 50%, #4a5a6e 100%)';
+                        } else if (savedBackground && !savedBackground.startsWith('custom-') && savedBackground !== 'custom') {
+                            // Apply preset backgrounds immediately
+                            switch(savedBackground) {
+                                case 'default':
+                                    el.style.backgroundImage = 'url("../assets/images/Peak.jpg")';
+                                    el.style.background = 'url("../assets/images/Peak.jpg"), linear-gradient(135deg, #2d3a4e 0%, #3a4a5e 50%, #4a5a6e 100%)';
+                                    break;
+                                case 'dark-blue':
+                                    el.style.backgroundImage = 'url("../assets/images/Mountain.jpg")';
+                                    el.style.background = 'url("../assets/images/Mountain.jpg"), linear-gradient(135deg, #2d3a4e 0%, #3a4a5e 50%, #4a5a6e 100%)';
+                                    break;
+                                case 'mountain':
+                                    el.style.backgroundImage = 'url("../assets/images/Mountain.jpg")';
+                                    el.style.background = 'url("../assets/images/Mountain.jpg"), linear-gradient(135deg, #2d3a4e 0%, #3a4a5e 50%, #4a5a6e 100%)';
+                                    break;
+                            }
+                        }
+                    };
+
+                    applyToEl(desktop);
+                    applyToEl(loginScreen);
+                } else {
+                    // Retry if desktop element doesn't exist yet
+                    requestAnimationFrame(applyBackgroundSync);
+                }
+            }
+            applyBackgroundSync();
+        })();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
