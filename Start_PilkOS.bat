@@ -21,3 +21,5 @@ if not "%errorlevel%"=="0" exit /b %errorlevel%
 
 echo Starting PilkOS...
 call npm start
+if not "%errorlevel%"=="0" exit /b %errorlevel%
+exit

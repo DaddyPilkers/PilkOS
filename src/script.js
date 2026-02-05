@@ -4,7 +4,102 @@ function closeAllMenus() {
     if (startMenu) startMenu.classList.remove('show');
     const virtualDesktopOverlay = document.getElementById('virtual-desktop-overlay');
     if (virtualDesktopOverlay) virtualDesktopOverlay.classList.remove('show');
+    document.querySelectorAll('.context-menu.show').forEach(menu => {
+        menu.classList.remove('show');
+    });
+    const weatherMenu = document.getElementById('weather-menu');
+    if (weatherMenu) weatherMenu.classList.remove('show');
+    const calendarMenu = document.getElementById('calendar-menu');
+    if (calendarMenu) calendarMenu.classList.remove('show');
+    if (typeof window.closeQuickSettingsMenu === 'function') {
+        window.closeQuickSettingsMenu();
+    } else {
+        const quickSettingsMenu = document.getElementById('quick-settings-menu');
+        if (quickSettingsMenu) {
+            quickSettingsMenu.classList.remove('show');
+            quickSettingsMenu.style.display = 'none';
+        }
+    }
 }
+
+// In-app debug panel for environments without DevTools (visible, non-persistent)
+function ensureDebugPanel() {
+    if (document.getElementById('pilkos-debug-panel')) return document.getElementById('pilkos-debug-panel');
+    try {
+        const panel = document.createElement('div');
+        panel.id = 'pilkos-debug-panel';
+        panel.style.cssText = 'position:fixed;left:12px;top:12px;max-width:40vw;max-height:36vh;overflow:auto;background:rgba(10,10,15,0.85);color:#cfe;backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;font-size:12px;z-index:20000;box-shadow:0 8px 30px rgba(0,0,0,0.6);';
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:8px;';
+        const title = document.createElement('div');
+        title.textContent = 'Debug Log';
+        title.style.cssText = 'font-weight:700;color:#9dd2ff;font-size:12px';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '×';
+        closeBtn.title = 'Hide debug panel';
+        closeBtn.style.cssText = 'background:transparent;border:none;color:#9dd2ff;font-size:16px;cursor:pointer;';
+        closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        panel.appendChild(header);
+        const list = document.createElement('div');
+        list.id = 'pilkos-debug-list';
+        list.style.cssText = 'display:flex;flex-direction:column;gap:6px;max-height:calc(36vh - 32px);overflow:auto;';
+        panel.appendChild(list);
+        document.body.appendChild(panel);
+        return panel;
+    } catch (e) {
+        return null;
+    }
+}
+
+function debugLog(...args) {
+    try {
+        // Respect Developer Options toggle: only show panel when enabled
+        try {
+            const saved = localStorage.getItem('dev_showDebugPanel');
+            let enabled;
+            if (saved === null) {
+                // If not persisted, respect any existing panel presence (keep current visible state)
+                enabled = !!document.getElementById('pilkos-debug-panel');
+            } else {
+                enabled = saved === 'true';
+            }
+            if (!enabled) return;
+        } catch (e) {
+            // If localStorage isn't available, default to showing the panel
+        }
+        const panel = ensureDebugPanel();
+        if (!panel) return;
+        const list = panel.querySelector('#pilkos-debug-list');
+        if (!list) return;
+        const item = document.createElement('div');
+        const ts = new Date().toLocaleTimeString();
+        const text = args.map(a => {
+            try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
+        }).join(' ');
+        item.textContent = `[${ts}] ${text}`;
+        item.style.cssText = 'color:#e6f7ff;opacity:0.95;line-height:1.2;';
+        list.appendChild(item);
+        // Keep last 120 lines
+        while (list.children.length > 120) list.removeChild(list.firstChild);
+        // Scroll to bottom
+        list.scrollTop = list.scrollHeight;
+    } catch (e) {
+        // swallow
+    }
+}
+
+// Keep console.debug behavior but also mirror to in-page debug panel
+try {
+    if (typeof console !== 'undefined' && typeof console.debug === 'function') {
+        const _origDebug = console.debug.bind(console);
+        console.debug = function(...args) {
+            try { _origDebug(...args); } catch (e) {}
+            try { debugLog(...args); } catch (e) {}
+        };
+    }
+} catch (e) {}
 
 // Boot Screen (Splash) - shown for a fixed duration before login screen appears.
 const BOOT_DURATION_MS = 10000;
@@ -381,6 +476,9 @@ function initTooltips() {
         setupDockItemTooltip(item);
     });
 
+    // Ensure delegated tooltip handlers are active so tooltips survive DOM updates
+    try { ensureDockTooltipDelegation(); } catch (e) {}
+
     const getClockTooltipText = () => {
         const now = new Date();
         const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -407,15 +505,23 @@ function initTooltips() {
     };
 
     const getWeatherTooltipText = () => {
-        const locationName = localStorage.getItem('weatherLocationName');
-        return locationName && locationName.trim() ? locationName : 'Location unavailable';
+        return 'Weather';
+    };
+
+    const weatherTooltipControl = setupDockControlTooltip(
+        document.querySelector('.dock-weather'),
+        getWeatherTooltipText
+    );
+    window.updateWeatherTooltip = () => {
+        if (weatherTooltipControl && weatherTooltipControl.updateTooltip) {
+            weatherTooltipControl.updateTooltip();
+        }
     };
 
     const dockControlTooltips = [
         { element: document.getElementById('search-icon'), text: 'Start Menu' },
         { element: document.querySelector('.dock-virtual-desktops'), text: 'Virtual Desktops' },
         { element: document.querySelector('.dock-quick-settings'), text: 'Quick Settings' },
-        { element: document.querySelector('.dock-weather'), text: getWeatherTooltipText },
         { element: document.querySelector('.dock-clock'), text: getClockTooltipText }
     ];
     dockControlTooltips.forEach(({ element, text }) => {
@@ -451,7 +557,11 @@ function setupDockItemTooltip(item) {
         tooltipElement = document.createElement('div');
         tooltipElement.className = 'dock-tooltip tooltip';
         tooltipElement.textContent = tooltipText;
+        // Make tooltip non-interactive so it doesn't capture mouse events
+        tooltipElement.style.pointerEvents = 'none';
         document.body.appendChild(tooltipElement);
+        // store reference on the item for external updates/cleanup
+        try { item._tooltipElement = tooltipElement; } catch (e) {}
     }
     
     function updateTooltipPosition() {
@@ -482,9 +592,35 @@ function setupDockItemTooltip(item) {
     }
     
     function showTooltip() {
-        const showLabels = localStorage.getItem('taskbarShowLabels') !== 'false';
-        if (!showLabels) return;
-        
+        // Only show tooltip for pinned dock items (no running window) or when explicitly allowed
+        try {
+            const isPinned = item.classList && item.classList.contains('dock-item-pinned');
+            if (!isPinned) return;
+
+            // Determine app identifier to check for open windows. Prefer explicit dataset keys.
+            const appKey = (item.dataset.pinnedApp || item.dataset.appKey || item.dataset.app || tooltipText || '').toString().trim();
+            const appKeyLower = appKey.toLowerCase();
+
+            // Check if any .window elements match this app (title or dataset). If so, don't show tooltip.
+            let hasAppWindows = false;
+            try {
+                document.querySelectorAll('.window').forEach(w => {
+                    if (hasAppWindows) return;
+                    try {
+                        const dsApp = (w.dataset && (w.dataset.appKey || w.dataset.app || w.dataset.appName)) || '';
+                        const titleEl = w.querySelector && (w.querySelector('.window-title') || w.querySelector('.window-title-text'));
+                        const titleText = (dsApp || (titleEl && titleEl.textContent) || w.getAttribute('title') || w.textContent || '').toString().toLowerCase();
+                        if (!appKeyLower) return;
+                        if (titleText.includes(appKeyLower)) {
+                            hasAppWindows = true;
+                        }
+                    } catch (e) {}
+                });
+            } catch (e) {}
+
+            if (hasAppWindows) return;
+        } catch (e) { return; }
+
         if (!tooltipElement) createTooltip();
         updateTooltipPosition();
         tooltipElement.style.opacity = '1';
@@ -497,59 +633,49 @@ function setupDockItemTooltip(item) {
             tooltipElement.style.opacity = '0';
             tooltipElement.style.visibility = 'hidden';
             tooltipElement.style.transform = 'translateY(6px)';
+            // Remove from DOM shortly after hiding to avoid stale elements
+            setTimeout(() => {
+                try {
+                    if (tooltipElement && tooltipElement.parentNode) tooltipElement.parentNode.removeChild(tooltipElement);
+                } catch (e) {}
+                tooltipElement = null;
+                try { item._tooltipElement = null; } catch (e) {}
+            }, 160);
         }
     }
     
-    item.addEventListener('mouseenter', function(e) {
-        showTooltip();
-    });
-    
-    item.addEventListener('mousemove', function(e) {
-        const showLabels = localStorage.getItem('taskbarShowLabels') !== 'false';
-        if (showLabels && tooltipElement && tooltipElement.style.visibility === 'visible') {
-            updateTooltipPosition();
-        }
-    });
-    
-    item.addEventListener('mouseleave', function(e) {
-        hideTooltip();
-    });
-    
-    // Store reference to tooltip element for cleanup if needed
-    item._tooltipElement = tooltipElement;
+    // Do not attach per-item event listeners here — a delegated tooltip manager
+    // (ensureDockTooltipDelegation) handles showing/hiding so tooltips survive
+    // dock re-renders and avoid duplicate handlers.
+    try {
+        item._tooltipText = tooltipText;
+        // Hide the original tooltip element (kept in DOM for accessibility)
+        originalTooltip.style.display = 'none';
+    } catch (e) {}
 }
 
 // Function to update dock tooltips visibility based on setting
 function updateDockTooltipsVisibility() {
-    const showLabels = localStorage.getItem('taskbarShowLabels') !== 'false'; // Default to enabled
     const dockItems = document.querySelectorAll('.dock-item');
     
     dockItems.forEach(item => {
         const tooltip = item.querySelector('.dock-tooltip');
         const globalTooltip = item._tooltipElement;
         if (tooltip) {
-            // If labels are disabled, hide tooltips completely; if enabled, allow them to show on hover
-            if (showLabels) {
-                tooltip.style.display = 'block';
-                tooltip.style.pointerEvents = 'none';
-                // Ensure tooltip is ready to show (but hidden until hover)
-                tooltip.style.opacity = '0';
-                tooltip.style.visibility = 'hidden';
-                tooltip.style.transform = 'translateY(6px)';
-                // Re-setup tooltip if not already set up
-                if (item.dataset.tooltipSetup !== 'true') {
-                    setupDockItemTooltip(item);
-                }
-            } else {
-                tooltip.style.display = 'none';
-                tooltip.style.opacity = '0';
-                tooltip.style.visibility = 'hidden';
-            }
+            tooltip.style.display = 'none';
+            tooltip.style.opacity = '0';
+            tooltip.style.visibility = 'hidden';
         }
-        if (!showLabels && globalTooltip) {
-            globalTooltip.style.opacity = '0';
-            globalTooltip.style.visibility = 'hidden';
-            globalTooltip.style.transform = 'translateY(6px)';
+        if (globalTooltip) {
+            // If the user is currently hovering the dock item, do not forcibly hide
+            // the tooltip — let the delegated tooltip manager control visibility.
+            let isHover = false;
+            try { isHover = item.matches && item.matches(':hover'); } catch (e) { isHover = false; }
+            if (!isHover) {
+                globalTooltip.style.opacity = '0';
+                globalTooltip.style.visibility = 'hidden';
+                globalTooltip.style.transform = 'translateY(6px)';
+            }
         }
     });
 }
@@ -715,6 +841,300 @@ function setupDockControlTooltip(target, textOrGetter) {
         }
     };
 }
+
+// Delegated tooltip manager for dock items so tooltips survive DOM replacements
+function ensureDockTooltipDelegation() {
+    if (window._dockTooltipDelegatedSetup) return;
+    window._dockTooltipDelegatedSetup = true;
+
+    function createTooltipElement(text) {
+        const el = document.createElement('div');
+        el.className = 'dock-tooltip tooltip';
+        el.textContent = text;
+        el.style.pointerEvents = 'none';
+        el.style.opacity = '0';
+        el.style.visibility = 'hidden';
+        el.style.transform = 'translateY(6px)';
+        document.body.appendChild(el);
+        return el;
+    }
+
+    function positionTooltipForItem(tooltipEl, item) {
+        if (!tooltipEl || !item) return;
+        const rect = item.getBoundingClientRect();
+        const tooltipRect = tooltipEl.getBoundingClientRect();
+        const tooltipWidth = tooltipRect.width || tooltipEl.offsetWidth || 0;
+        const tooltipHeight = tooltipRect.height || tooltipEl.offsetHeight || 0;
+        const centerX = rect.left + rect.width / 2;
+        const padding = 6;
+
+        let left = centerX - (tooltipWidth / 2);
+        const maxLeft = Math.max(padding, window.innerWidth - tooltipWidth - padding);
+        left = Math.min(maxLeft, Math.max(padding, left));
+
+        const dockRect = _getDockEl()?.getBoundingClientRect();
+        let top = rect.top - tooltipHeight - padding;
+        if (dockRect) top = dockRect.top - tooltipHeight - padding;
+        if (top < padding) top = padding;
+
+        tooltipEl.style.top = top + 'px';
+        tooltipEl.style.left = left + 'px';
+    }
+
+    function itemHasOpenWindows(item) {
+        try {
+            const appKey = (item.dataset.pinnedApp || item.dataset.appKey || item.dataset.app || (item.querySelector('.dock-tooltip') && item.querySelector('.dock-tooltip').textContent) || '').toString().trim().toLowerCase();
+            if (!appKey) return false;
+            let found = false;
+            document.querySelectorAll('.window').forEach(w => {
+                if (found) return;
+                try {
+                    const dsApp = (w.dataset && (w.dataset.appKey || w.dataset.app || w.dataset.appName)) || '';
+                    const titleEl = w.querySelector && (w.querySelector('.window-title') || w.querySelector('.window-title-text'));
+                    const titleText = (dsApp || (titleEl && titleEl.textContent) || w.getAttribute('title') || w.textContent || '').toString().toLowerCase();
+                    if (titleText.includes(appKey)) {
+                        found = true;
+                    }
+                } catch (e) {}
+            });
+            return found;
+        } catch (e) { return false; }
+    }
+
+    // Hover debounce state per dock item
+    const _hoverState = new WeakMap();
+    const SHOW_DELAY_MS = 160;
+    const HIDE_DELAY_MS = 220;
+    const IMMEDIATE_HIDE_DISTANCE_PX = 48; // if pointer moves this far from icon, hide immediately
+
+    function scheduleShowTooltip(item, tooltipText) {
+        if (!item) return;
+        let state = _hoverState.get(item) || {};
+        // Clear any pending hide
+        if (state.hideTimer) { clearTimeout(state.hideTimer); state.hideTimer = null; }
+        // If already visible, ensure positioned
+        if (item._tooltipElement) {
+            try { positionTooltipForItem(item._tooltipElement, item); } catch (e) {}
+            _hoverState.set(item, state);
+            return;
+        }
+        // Schedule show
+        if (state.showTimer) return; // already scheduled
+        state.showTimer = setTimeout(() => {
+            try {
+                // Double-check preconditions
+                if (!item.classList || !item.classList.contains('dock-item-pinned')) return;
+                if (itemHasOpenWindows(item)) return;
+
+                // Build tooltip text if not supplied
+                let text = tooltipText || '';
+                if (!text) {
+                    const orig = item.querySelector('.dock-tooltip');
+                    try { if (orig && orig.textContent) text = orig.textContent.trim(); } catch (e) {}
+                    if (!text) try { text = item.dataset.pinnedApp || item.dataset.appKey || item.dataset.app || item.getAttribute('title') || ''; } catch (e) {}
+                }
+                text = (text || '').toString().trim();
+                if (!text) return;
+
+                if (item._tooltipElement) {
+                    try { positionTooltipForItem(item._tooltipElement, item); } catch (e) {}
+                } else {
+                    const tip = createTooltipElement(text);
+                    item._tooltipElement = tip;
+                    setTimeout(() => positionTooltipForItem(tip, item), 0);
+                    setTimeout(() => { try { tip.style.opacity = '1'; tip.style.visibility = 'visible'; tip.style.transform = 'translateY(0)'; } catch (e) {} }, 10);
+                }
+            } catch (e) {}
+            try {
+                // scheduled show (debug removed)
+            } catch (e) {}
+            state.showTimer = null;
+            _hoverState.set(item, state);
+        }, SHOW_DELAY_MS);
+        _hoverState.set(item, state);
+    }
+
+    function scheduleHideTooltip(item) {
+        if (!item) return;
+        let state = _hoverState.get(item) || {};
+        // Clear pending show
+        if (state.showTimer) { clearTimeout(state.showTimer); state.showTimer = null; }
+        if (!item._tooltipElement) return;
+        if (state.hideTimer) return;
+        state.hideTimer = setTimeout(() => {
+            try {
+                // Before hiding, check the last known pointer position. If the pointer is
+                // still over this dock item (or very near it), cancel hiding to avoid
+                // accidental hides caused by small pointer movements.
+                try {
+                    const id = item.dataset.pinnedApp || item.dataset.appKey || item.dataset.app || item._tooltipText || item.id || '(no-id)';
+                    const pos = window._dockTooltipLastPointer || null;
+                    let overItem = false;
+                    try {
+                        if (item.matches && item.matches(':hover')) overItem = true;
+                    } catch (e) {}
+                    // Fallback: use proximity check against the item's bounding rect (inflated)
+                    // This is more robust than elementFromPoint when small pointer jitter or
+                    // overlays interfere with direct element lookup.
+                    let rect = null;
+                    try {
+                        if (!overItem && pos) {
+                            rect = item.getBoundingClientRect();
+                            const padding = 10; // allow small movements within 10px
+                            if (pos.x >= rect.left - padding && pos.x <= rect.right + padding && pos.y >= rect.top - padding && pos.y <= rect.bottom + padding) {
+                                overItem = true;
+                            } else {
+                                const tip = item._tooltipElement;
+                                if (tip) {
+                                    const trect = tip.getBoundingClientRect();
+                                    if (pos.x >= trect.left - padding && pos.x <= trect.right + padding && pos.y >= trect.top - padding && pos.y <= trect.bottom + padding) {
+                                        overItem = true;
+                                    }
+                                }
+                            }
+
+                            // If pointer is clearly far away from both the icon and tooltip, hide immediately
+                            try {
+                                const dx = pos.x < rect.left ? rect.left - pos.x : (pos.x > rect.right ? pos.x - rect.right : 0);
+                                const dy = pos.y < rect.top ? rect.top - pos.y : (pos.y > rect.bottom ? pos.y - rect.bottom : 0);
+                                const dist = Math.sqrt(dx * dx + dy * dy);
+                                if (!overItem && dist > IMMEDIATE_HIDE_DISTANCE_PX) {
+                                    // immediate hide
+                                    const tip = item._tooltipElement;
+                                    if (tip) {
+                                        try { tip.style.opacity = '0'; tip.style.visibility = 'hidden'; tip.style.transform = 'translateY(6px)'; } catch (e) {}
+                                        try { if (tip && tip.parentNode) tip.parentNode.removeChild(tip); } catch (e) {}
+                                    }
+                                    item._tooltipElement = null;
+                                    state.hideTimer = null;
+                                    _hoverState.set(item, state);
+                                    // immediate hide (debug removed)
+                                    return;
+                                }
+                            } catch (e) {}
+                        }
+                    } catch (e) {}
+                    // hide check (debug removed)
+                    if (overItem) {
+                        state.hideTimer = null;
+                        _hoverState.set(item, state);
+                        return;
+                    }
+                } catch (e) {}
+
+                const tip = item._tooltipElement;
+                if (!tip) return;
+                tip.style.opacity = '0';
+                tip.style.visibility = 'hidden';
+                tip.style.transform = 'translateY(6px)';
+                setTimeout(() => { try { if (tip && tip.parentNode) tip.parentNode.removeChild(tip); } catch (e) {} }, 120);
+                item._tooltipElement = null;
+            } catch (e) {}
+            state.hideTimer = null;
+            _hoverState.set(item, state);
+        }, HIDE_DELAY_MS);
+        _hoverState.set(item, state);
+    }
+
+    // Track last pointer position globally for more robust hover checks
+    document.addEventListener('pointermove', (e) => {
+        try {
+            window._dockTooltipLastPointer = { x: e.clientX, y: e.clientY };
+        } catch (err) {}
+
+        try {
+            // Determine the dock item currently under the pointer (if any)
+            const el = (typeof document.elementFromPoint === 'function') ? document.elementFromPoint(e.clientX, e.clientY) : e.target;
+            const item = el && el.closest && el.closest('.dock-item') ? el.closest('.dock-item') : null;
+
+            // Only consider pinned dock items without open windows
+            const effectiveItem = (item && item.classList && item.classList.contains('dock-item-pinned') && !itemHasOpenWindows(item)) ? item : null;
+
+            if (!window._dockTooltipCurrentHovered) {
+                // No current hovered item
+                if (effectiveItem) {
+                    const tooltipText = effectiveItem._tooltipText || (effectiveItem.querySelector('.dock-tooltip') && effectiveItem.querySelector('.dock-tooltip').textContent) || '';
+                    scheduleShowTooltip(effectiveItem, tooltipText);
+                    window._dockTooltipCurrentHovered = effectiveItem;
+                }
+            } else {
+                // There is a current hovered item
+                if (window._dockTooltipCurrentHovered !== effectiveItem) {
+                    // Hover moved away from previous
+                    try { scheduleHideTooltip(window._dockTooltipCurrentHovered); } catch (e) {}
+                    window._dockTooltipCurrentHovered = null;
+                    // If new effective item exists, show it
+                    if (effectiveItem) {
+                        const tooltipText = effectiveItem._tooltipText || (effectiveItem.querySelector('.dock-tooltip') && effectiveItem.querySelector('.dock-tooltip').textContent) || '';
+                        scheduleShowTooltip(effectiveItem, tooltipText);
+                        window._dockTooltipCurrentHovered = effectiveItem;
+                    }
+                }
+            }
+        } catch (e) {}
+    }, { passive: true });
+
+    document.addEventListener('pointerdown', (e) => {
+        // Remove tooltip for the clicked item (if any)
+        const item = e.target && e.target.closest && e.target.closest('.dock-item');
+        if (item) {
+            try {
+                const tip = item._tooltipElement;
+                if (tip) {
+                    tip.style.opacity = '0';
+                    tip.style.visibility = 'hidden';
+                    tip.style.transform = 'translateY(6px)';
+                    try { if (tip && tip.parentNode) tip.parentNode.removeChild(tip); } catch (e) {}
+                    item._tooltipElement = null;
+                }
+            } catch (e) {}
+        }
+
+        // Also remove any orphaned/leftover dock tooltips globally to avoid stuck tooltips
+        try {
+            document.querySelectorAll('.dock-tooltip.tooltip').forEach(tip => {
+                try {
+                    if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
+                } catch (e) {}
+            });
+            // Clear any _tooltipElement references on existing dock items
+            document.querySelectorAll('.dock-item').forEach(it => { try { it._tooltipElement = null; } catch (e) {} });
+        } catch (e) {}
+    }, true);
+
+    // Remove all dock tooltips when dock DOM changes (e.g., re-render/pinning)
+    try {
+        const dock = _getDockEl();
+        if (dock && typeof MutationObserver !== 'undefined') {
+            const mo = new MutationObserver(() => {
+                try {
+                    const currentHovered = window._dockTooltipCurrentHovered || null;
+                    // Remove orphaned tooltips, but preserve tooltip for the item currently hovered
+                    document.querySelectorAll('.dock-tooltip.tooltip').forEach(tip => {
+                        try {
+                            // If this tooltip belongs to the currently hovered item, skip removal
+                            if (currentHovered && currentHovered._tooltipElement === tip) return;
+                            const owner = tip._ownerItem || (tip.closest && tip.closest('.dock-item')) || null;
+                            if (owner && owner === currentHovered) return;
+                            if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
+                        } catch (e) {}
+                    });
+
+                    // Clear _tooltipElement references for items that no longer have a tooltip in DOM
+                    document.querySelectorAll('.dock-item').forEach(it => {
+                        try {
+                            if (it._tooltipElement && (!it._tooltipElement.parentNode || it._tooltipElement.parentNode.nodeType === 11 /* DocumentFragment? */)) {
+                                it._tooltipElement = null;
+                            }
+                        } catch (e) {}
+                    });
+                } catch (e) {}
+            });
+            mo.observe(dock, { childList: true, subtree: true });
+        }
+    } catch (e) {}
+}
+
 
 // Notification System
 
@@ -1160,6 +1580,15 @@ function generateTempFileName() {
 function initClock() {
     const clockElement = document.getElementById('clock-time');
     if (!clockElement) return;
+    const calendarMenu = document.getElementById('calendar-menu');
+    const calendarMonthLabel = document.getElementById('calendar-month-label');
+    const calendarGrid = document.getElementById('calendar-grid');
+    const calendarPrevBtn = document.getElementById('calendar-prev-btn');
+    const calendarNextBtn = document.getElementById('calendar-next-btn');
+    const calendarState = {
+        viewDate: new Date(),
+        animationDir: 'right'
+    };
 
     function updateClock() {
         const now = new Date();
@@ -1189,23 +1618,135 @@ function initClock() {
 
     }
 
-    if (clockElement.dataset.clockToggleBound !== 'true') {
-        clockElement.addEventListener('click', () => {
-            const clockFormatSetting = localStorage.getItem('clock24HourFormat');
-            const use24Hour = clockFormatSetting === null ? true : clockFormatSetting === 'true';
-            const nextUse24Hour = !use24Hour;
+    const renderCalendar = ({ animate = false } = {}) => {
+        if (!calendarMenu || !calendarGrid || !calendarMonthLabel) return;
+        const viewDate = calendarState.viewDate;
+        const year = viewDate.getFullYear();
+        const month = viewDate.getMonth();
+        const monthNames = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
+        ];
+        calendarMonthLabel.textContent = `${monthNames[month]} ${year}`;
+        calendarGrid.innerHTML = '';
 
-            localStorage.setItem('clock24HourFormat', nextUse24Hour.toString());
+        const firstDay = new Date(year, month, 1);
+        const startDay = firstDay.getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-            const clock24HourToggle = document.querySelector('#clock-24-hour-toggle');
-            if (clock24HourToggle) {
-                clock24HourToggle.classList.toggle('active', nextUse24Hour);
+        const prevMonthDays = new Date(year, month, 0).getDate();
+        for (let i = 0; i < startDay; i += 1) {
+            const dayNumber = prevMonthDays - startDay + i + 1;
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day is-outside';
+            cell.textContent = String(dayNumber);
+            calendarGrid.appendChild(cell);
+        }
+
+        for (let day = 1; day <= daysInMonth; day += 1) {
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day';
+            cell.textContent = String(day);
+            const cellDate = new Date(year, month, day);
+            cellDate.setHours(0, 0, 0, 0);
+            if (cellDate.getTime() === today.getTime()) {
+                cell.classList.add('is-today');
             }
+            calendarGrid.appendChild(cell);
+        }
 
-            updateClock();
+        const totalCells = startDay + daysInMonth;
+        const trailingDays = Math.max(0, 42 - totalCells);
+        for (let day = 1; day <= trailingDays; day += 1) {
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day is-outside';
+            cell.textContent = String(day);
+            calendarGrid.appendChild(cell);
+        }
+
+        if (animate) {
+            const animationClass = calendarState.animationDir === 'left'
+                ? 'is-animating-left'
+                : 'is-animating-right';
+            calendarGrid.classList.remove('is-animating', 'is-animating-left', 'is-animating-right');
+            requestAnimationFrame(() => {
+                calendarGrid.classList.add('is-animating', animationClass);
+                setTimeout(() => {
+                    calendarGrid.classList.remove('is-animating', 'is-animating-left', 'is-animating-right');
+                }, 180);
+            });
+        } else {
+            calendarGrid.classList.remove('is-animating', 'is-animating-left', 'is-animating-right');
+        }
+    };
+
+    if (calendarPrevBtn && calendarPrevBtn.dataset.calendarNavBound !== 'true') {
+        calendarPrevBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            calendarState.animationDir = 'left';
+            calendarState.viewDate = new Date(
+                calendarState.viewDate.getFullYear(),
+                calendarState.viewDate.getMonth() - 1,
+                1
+            );
+            renderCalendar({ animate: true });
         });
-        clockElement.dataset.clockToggleBound = 'true';
+        calendarPrevBtn.dataset.calendarNavBound = 'true';
     }
+
+    if (calendarNextBtn && calendarNextBtn.dataset.calendarNavBound !== 'true') {
+        calendarNextBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            calendarState.animationDir = 'right';
+            calendarState.viewDate = new Date(
+                calendarState.viewDate.getFullYear(),
+                calendarState.viewDate.getMonth() + 1,
+                1
+            );
+            renderCalendar({ animate: true });
+        });
+        calendarNextBtn.dataset.calendarNavBound = 'true';
+    }
+
+    function positionCalendarMenu() {
+        if (!calendarMenu) return;
+        const iconRect = clockElement.getBoundingClientRect();
+        const menuWidth = 320;
+        positionDockMenuForControl(calendarMenu, iconRect, { menuWidth, menuHeight: 240 });
+    }
+
+    if (clockElement.dataset.calendarMenuBound !== 'true') {
+        clockElement.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const wasOpen = calendarMenu && calendarMenu.classList.contains('show');
+            closeAllMenus();
+            if (!wasOpen && calendarMenu) {
+                calendarState.viewDate = new Date();
+                renderCalendar({ animate: false });
+                calendarMenu.classList.add('show');
+                setTimeout(positionCalendarMenu, 0);
+            }
+        });
+        clockElement.dataset.calendarMenuBound = 'true';
+    }
+
+    document.addEventListener('click', (e) => {
+        if (!calendarMenu || !calendarMenu.classList.contains('show')) return;
+        const clickedClock = clockElement.contains(e.target);
+        const clickedMenu = calendarMenu.contains(e.target);
+        if (!clickedClock && !clickedMenu) {
+            calendarMenu.classList.remove('show');
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        if (calendarMenu && calendarMenu.classList.contains('show')) {
+            positionCalendarMenu();
+        }
+    });
 
     updateClock();
     setInterval(updateClock, 1000);
@@ -1303,8 +1844,12 @@ function initBattery() {
     let currentBatteryLevel = 0;
     let isCharging = false;
     let batteryObject = null;
+    let batteryOverrideActive = false;
 
     function updateBatteryStatus(battery) {
+        if (batteryOverrideActive) {
+            return;
+        }
         const level = Math.round(battery.level * 100);
         const charging = battery.charging;
         
@@ -1406,11 +1951,11 @@ function initBattery() {
             const totalMinutes = remainingPercent * minutesPerPercent;
             
             if (totalMinutes < 60) {
-                return { time: `${Math.round(totalMinutes)} min`, label: 'until full', status: 'Charging' };
+                return { time: `${Math.round(totalMinutes)}m`, label: 'Until Full', status: 'Charging' };
             } else {
                 const hours = Math.floor(totalMinutes / 60);
                 const mins = Math.round(totalMinutes % 60);
-                return { time: `${hours}h ${mins}m`, label: 'until full', status: 'Charging' };
+                return { time: `${hours}h ${mins}m`, label: 'Until Full', status: 'Charging' };
             }
         } else {
             // Calculate time until depleted
@@ -1433,14 +1978,14 @@ function initBattery() {
             
             if (hoursRemaining < 1) {
                 const minutes = Math.round(hoursRemaining * 60);
-                return { time: `${minutes} min`, label: 'remaining', status: 'Discharging' };
+                return { time: `${minutes} min`, label: 'Remaining', status: 'Discharging' };
             } else {
                 const hours = Math.floor(hoursRemaining);
                 const mins = Math.round((hoursRemaining - hours) * 60);
                 if (mins === 0) {
-                    return { time: `${hours}h`, label: 'remaining', status: 'Discharging' };
+                    return { time: `${hours}h`, label: 'Remaining', status: 'Discharging' };
                 } else {
-                    return { time: `${hours}h ${mins}m`, label: 'remaining', status: 'Discharging' };
+                    return { time: `${hours}h ${mins}m`, label: 'Remaining', status: 'Discharging' };
                 }
             }
         }
@@ -1451,11 +1996,13 @@ function initBattery() {
         const batteryProgressBar = document.getElementById('battery-progress-bar');
         const batteryMenuTime = document.getElementById('battery-menu-time');
         
-        const timeInfo = calculateBatteryTime();
-        if (timeInfo.status === 'Battery Full') {
-            window.currentBatteryTimeText = 'Fully Charged';
-        } else {
-            window.currentBatteryTimeText = `${timeInfo.status} • ${timeInfo.time} ${timeInfo.label}`;
+        if (!batteryOverrideActive) {
+            const timeInfo = calculateBatteryTime();
+            if (timeInfo.status === 'Battery Full') {
+                window.currentBatteryTimeText = 'Fully Charged';
+            } else {
+                window.currentBatteryTimeText = `${timeInfo.status} • ${timeInfo.time} ${timeInfo.label}`;
+            }
         }
 
         if (batteryMenu && batteryProgressBar) {
@@ -1468,8 +2015,36 @@ function initBattery() {
 
         if (window.updateQuickSettingsPanel) {
             window.updateQuickSettingsPanel();
+        } else if (window.updateQuickSettingsNotifications) {
+            window.updateQuickSettingsNotifications();
         }
     }
+
+    function applyBatteryOverride({ level, charging, timeText }) {
+        batteryOverrideActive = true;
+        currentBatteryLevel = level;
+        isCharging = charging;
+        window.currentBatteryLevel = level;
+        window.isCharging = charging;
+        window.currentBatteryTimeText = timeText;
+        if (typeof updateBatteryMenu === 'function') {
+            updateBatteryMenu();
+        } else if (window.updateQuickSettingsPanel) {
+            window.updateQuickSettingsPanel();
+        }
+    }
+
+    function clearBatteryOverride() {
+        batteryOverrideActive = false;
+        if (batteryObject) {
+            updateBatteryStatus(batteryObject);
+        } else if (window.updateQuickSettingsPanel) {
+            window.updateQuickSettingsPanel();
+        }
+    }
+
+    window.applyBatteryOverride = applyBatteryOverride;
+    window.clearBatteryOverride = clearBatteryOverride;
     
     // Make updateBatteryMenu accessible globally for profile changes
     window.updateBatteryMenuFromBattery = updateBatteryMenu;
@@ -1565,12 +2140,12 @@ function initVolume() {
             // Muted - show X line (diagonal line from top-left of speaker to bottom-right of sound waves)
             // Starts from top-left portion of speaker cone, extends through center to bottom-right
             const muteLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            muteLine.setAttribute('x1', '1');
-            muteLine.setAttribute('y1', '5');
-            muteLine.setAttribute('x2', '16');
-            muteLine.setAttribute('y2', '16');
+            muteLine.setAttribute('x1', '0');
+            muteLine.setAttribute('y1', '0');
+            muteLine.setAttribute('x2', '24');
+            muteLine.setAttribute('y2', '24');
             muteLine.setAttribute('stroke', 'currentColor');
-            muteLine.setAttribute('stroke-width', '2');
+            muteLine.setAttribute('stroke-width', '2.5');
             muteLine.setAttribute('stroke-linecap', 'round');
             svg.appendChild(muteLine);
         } else {
@@ -1717,6 +2292,12 @@ function initWiFi() {
         }
     }
 
+    const notifyQuickSettings = () => {
+        if (typeof window.updateQuickSettingsNotifications === 'function') {
+            window.updateQuickSettingsNotifications();
+        }
+    };
+
     function getWiFiStrength() {
         // Respect Wi‑Fi toggle state (keeps dock slash + disconnected icon consistent)
         let wifiEnabled = true;
@@ -1727,6 +2308,7 @@ function initWiFi() {
         wifiIcon.classList.toggle('is-disabled', !wifiEnabled);
         if (!wifiEnabled) {
             updateWiFiIcon(0);
+            notifyQuickSettings();
             return;
         }
 
@@ -1754,6 +2336,7 @@ function initWiFi() {
                     }
                     
                     updateWiFiIcon(strength);
+                    notifyQuickSettings();
                     return;
                 }
             }
@@ -1767,6 +2350,7 @@ function initWiFi() {
             // No connection
             updateWiFiIcon(0);
         }
+        notifyQuickSettings();
     }
     
     // Make updateWiFiIcon accessible globally
@@ -2053,23 +2637,71 @@ function initVolumeMenu() {
 // Dock window preview (live hover snapshots)
 const DOCK_WINDOW_PREVIEW_REFRESH_MS = 500;
 const DOCK_WINDOW_PREVIEW_HIDE_DELAY_MS = 80;
+const DOCK_WINDOW_PREVIEW_GROUP_REFRESH_MS = 700;
+const DOCK_WINDOW_PREVIEW_GROUP_CACHE_TTL_MS = 5000;
+const DOCK_WINDOW_PREVIEW_GROUP_BATCH_SIZE = 2;
+const DOCK_WINDOW_PREVIEW_GROUP_BATCH_DELAY_MS = 140;
+const DOCK_WINDOW_PREVIEW_GROUP_SCALE = 0.22;
 const dockWindowPreviewCache = new WeakMap();
+const dockWindowPreviewCacheTime = new WeakMap();
 const dockWindowPreviewState = {
     container: null,
     titleEl: null,
     stateEl: null,
     imageEl: null,
     placeholderEl: null,
+    closeBtn: null,
     activeIcon: null,
     activeWindow: null,
     refreshTimer: null,
     hideTimer: null,
+    pendingShow: false,
     renderInFlight: false,
     pendingRender: false
+};
+const dockWindowPreviewGroupState = {
+    container: null,
+    headerTitleEl: null,
+    headerCountEl: null,
+    gridEl: null,
+    activeIcon: null,
+    activeAppKey: null,
+    windows: [],
+    refreshTimer: null,
+    hideTimer: null,
+    renderTimer: null,
+    renderToken: 0
 };
 
 function canRenderDockWindowPreviews() {
     return typeof window.html2canvas === 'function';
+}
+
+function getWindowAppKey(win) {
+    if (!win) return 'Window';
+    const dsKey = win.dataset && (win.dataset.appKey || win.dataset.appName || win.dataset.app);
+    if (dsKey) return String(dsKey);
+    const id = win.id || (win.getAttribute ? win.getAttribute('id') : '');
+    if (id) {
+        const patterns = [
+            [/^settings-window-/, 'Settings'],
+            [/^file-explorer-window-/, 'Files'],
+            [/^editor-/, 'Editor'],
+            [/^viewer-window-/, 'Viewer'],
+            [/^player-window-/, 'Player'],
+            [/^paint-window-/, 'Paint'],
+            [/^calculate-window-/, 'Calculate'],
+            [/^task-manager-window-/, 'Tasks'],
+            [/^screen-recorder-window-/, 'Capture'],
+            [/^properties-/, 'Properties']
+        ];
+        for (const [regex, name] of patterns) {
+            if (regex.test(id)) return name;
+        }
+    }
+    const title = getWindowTitleText(win, '').trim();
+    if (title) return title;
+    return id || 'Window';
 }
 
 function getWindowTitleText(win, fallback = '') {
@@ -2091,6 +2723,12 @@ function ensureDockWindowPreviewEl() {
     container.className = 'dock-window-preview';
     container.setAttribute('aria-hidden', 'true');
     container.innerHTML = `
+        <button class="dock-window-preview-close" type="button" aria-label="Close window">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </button>
         <div class="dock-window-preview-body">
             <img class="dock-window-preview-image" alt="Window preview">
             <div class="dock-window-preview-placeholder">Preview Unavailable</div>
@@ -2102,6 +2740,33 @@ function ensureDockWindowPreviewEl() {
     dockWindowPreviewState.imageEl = container.querySelector('.dock-window-preview-image');
     dockWindowPreviewState.placeholderEl = container.querySelector('.dock-window-preview-placeholder');
     dockWindowPreviewState.titleEl = container.querySelector('.dock-window-preview-label');
+    dockWindowPreviewState.closeBtn = container.querySelector('.dock-window-preview-close');
+
+    if (dockWindowPreviewState.closeBtn) {
+        dockWindowPreviewState.closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const win = dockWindowPreviewState.activeWindow;
+            if (!win) return;
+            const closeControl = win.querySelector('.window-control.close');
+            if (closeControl) {
+                closeControl.click();
+            } else {
+                win.remove();
+            }
+            hideDockWindowPreview();
+        });
+    }
+
+    container.addEventListener('mouseenter', () => {
+        if (dockWindowPreviewState.hideTimer) {
+            clearTimeout(dockWindowPreviewState.hideTimer);
+            dockWindowPreviewState.hideTimer = null;
+        }
+    });
+
+    container.addEventListener('mouseleave', () => {
+        scheduleDockWindowPreviewHide();
+    });
 
     window.addEventListener('resize', () => {
         if (dockWindowPreviewState.container?.classList.contains('show') && dockWindowPreviewState.activeIcon) {
@@ -2168,6 +2833,7 @@ function hideDockWindowPreview() {
     dockWindowPreviewState.container.setAttribute('aria-hidden', 'true');
     dockWindowPreviewState.activeIcon = null;
     dockWindowPreviewState.activeWindow = null;
+    dockWindowPreviewState.pendingShow = false;
 }
 
 function scheduleDockWindowPreviewHide() {
@@ -2191,7 +2857,12 @@ function requestDockWindowPreviewRender() {
 async function renderDockWindowPreview(win) {
     if (!win || !dockWindowPreviewState.container) return;
     if (!document.body.contains(win)) return;
-    if (!dockWindowPreviewState.container.classList.contains('show')) return;
+    if (
+        !dockWindowPreviewState.container.classList.contains('show') &&
+        !dockWindowPreviewState.pendingShow
+    ) {
+        return;
+    }
     if (!canRenderDockWindowPreviews()) return;
     if (isWindowMinimized(win) || win.classList.contains('window-desktop-hidden')) {
         const cached = dockWindowPreviewCache.get(win);
@@ -2220,14 +2891,60 @@ async function renderDockWindowPreview(win) {
         if (url) {
             dockWindowPreviewCache.set(win, url);
         }
-        setDockWindowPreviewSnapshot(url || dockWindowPreviewCache.get(win) || null);
+        const finalUrl = url || dockWindowPreviewCache.get(win) || null;
+        setDockWindowPreviewSnapshot(finalUrl);
         updateDockWindowPreviewContent(win);
-        positionDockWindowPreview(dockWindowPreviewState.activeIcon);
+        if (dockWindowPreviewState.pendingShow && dockWindowPreviewState.activeWindow === win) {
+            const reveal = () => {
+                if (!dockWindowPreviewState.pendingShow || dockWindowPreviewState.activeWindow !== win) return;
+                dockWindowPreviewState.pendingShow = false;
+                dockWindowPreviewState.container.classList.add('show');
+                dockWindowPreviewState.container.setAttribute('aria-hidden', 'false');
+                positionDockWindowPreview(dockWindowPreviewState.activeIcon);
+            };
+            const img = dockWindowPreviewState.imageEl;
+            if (finalUrl && img) {
+                if (img.complete && img.naturalWidth) {
+                    reveal();
+                } else {
+                    img.onload = () => {
+                        img.onload = null;
+                        reveal();
+                    };
+                }
+            } else {
+                reveal();
+            }
+        } else {
+            positionDockWindowPreview(dockWindowPreviewState.activeIcon);
+        }
     } catch (e) {
         if (dockWindowPreviewState.activeWindow !== win) return;
         const cached = dockWindowPreviewCache.get(win);
         setDockWindowPreviewSnapshot(cached || null);
         updateDockWindowPreviewContent(win);
+        if (cached && dockWindowPreviewState.pendingShow && dockWindowPreviewState.activeWindow === win) {
+            const reveal = () => {
+                if (!dockWindowPreviewState.pendingShow || dockWindowPreviewState.activeWindow !== win) return;
+                dockWindowPreviewState.pendingShow = false;
+                dockWindowPreviewState.container.classList.add('show');
+                dockWindowPreviewState.container.setAttribute('aria-hidden', 'false');
+                positionDockWindowPreview(dockWindowPreviewState.activeIcon);
+            };
+            const img = dockWindowPreviewState.imageEl;
+            if (img) {
+                if (img.complete && img.naturalWidth) {
+                    reveal();
+                } else {
+                    img.onload = () => {
+                        img.onload = null;
+                        reveal();
+                    };
+                }
+            } else {
+                reveal();
+            }
+        }
     } finally {
         dockWindowPreviewState.renderInFlight = false;
         if (dockWindowPreviewState.pendingRender) {
@@ -2237,9 +2954,314 @@ async function renderDockWindowPreview(win) {
     }
 }
 
+async function captureDockWindowSnapshot(win, options = {}) {
+    if (!win || !document.body.contains(win)) return null;
+    if (!canRenderDockWindowPreviews()) return null;
+    if (isWindowMinimized(win) || win.classList.contains('window-desktop-hidden')) {
+        return dockWindowPreviewCache.get(win) || null;
+    }
+
+    try {
+        const isFileProtocol = window.location && window.location.protocol === 'file:';
+        const scale = typeof options.scale === 'number' ? options.scale : 0.3;
+        const canvas = await window.html2canvas(win, {
+            backgroundColor: null,
+            logging: false,
+            scale,
+            useCORS: !isFileProtocol,
+            allowTaint: false
+        });
+        let url = null;
+        try {
+            url = canvas.toDataURL('image/png');
+        } catch (e) {
+            url = null;
+        }
+        if (url) {
+            dockWindowPreviewCache.set(win, url);
+            dockWindowPreviewCacheTime.set(win, Date.now());
+        }
+        return url || dockWindowPreviewCache.get(win) || null;
+    } catch (e) {
+        return dockWindowPreviewCache.get(win) || null;
+    }
+}
+
+function ensureDockWindowPreviewGroupEl() {
+    if (dockWindowPreviewGroupState.container) return dockWindowPreviewGroupState.container;
+    const container = document.createElement('div');
+    container.className = 'dock-window-preview-group';
+    container.setAttribute('aria-hidden', 'true');
+    container.innerHTML = `
+        <div class="dock-window-preview-group-header">
+            <div class="dock-window-preview-group-title"></div>
+            <div class="dock-window-preview-group-count"></div>
+        </div>
+        <div class="dock-window-preview-grid"></div>
+    `;
+    document.body.appendChild(container);
+    dockWindowPreviewGroupState.container = container;
+    dockWindowPreviewGroupState.headerTitleEl = container.querySelector('.dock-window-preview-group-title');
+    dockWindowPreviewGroupState.headerCountEl = container.querySelector('.dock-window-preview-group-count');
+    dockWindowPreviewGroupState.gridEl = container.querySelector('.dock-window-preview-grid');
+
+    container.addEventListener('mouseenter', () => {
+        if (dockWindowPreviewGroupState.hideTimer) {
+            clearTimeout(dockWindowPreviewGroupState.hideTimer);
+            dockWindowPreviewGroupState.hideTimer = null;
+        }
+    });
+
+    container.addEventListener('mouseleave', () => {
+        scheduleDockWindowPreviewGroupHide();
+    });
+
+    window.addEventListener('resize', () => {
+        if (dockWindowPreviewGroupState.container?.classList.contains('show') && dockWindowPreviewGroupState.activeIcon) {
+            positionDockWindowPreviewGroup(dockWindowPreviewGroupState.activeIcon);
+        }
+    });
+
+    return container;
+}
+
+function positionDockWindowPreviewGroup(iconEl) {
+    if (!iconEl) return;
+    const container = ensureDockWindowPreviewGroupEl();
+    const rect = iconEl.getBoundingClientRect();
+    const previewRect = container.getBoundingClientRect();
+    const padding = 10;
+    const centerX = rect.left + rect.width / 2;
+    let left = centerX - previewRect.width / 2;
+    const maxLeft = Math.max(padding, window.innerWidth - previewRect.width - padding);
+    left = Math.min(maxLeft, Math.max(padding, left));
+
+    const dockRect = _getDockEl()?.getBoundingClientRect();
+    let top = rect.top - previewRect.height - padding;
+    if (dockRect) {
+        top = dockRect.top - previewRect.height - padding;
+    }
+    if (top < padding) top = padding;
+    container.style.left = `${left}px`;
+    container.style.top = `${top}px`;
+}
+
+function stopDockWindowPreviewGroupRefresh() {
+    if (dockWindowPreviewGroupState.refreshTimer) {
+        clearInterval(dockWindowPreviewGroupState.refreshTimer);
+        dockWindowPreviewGroupState.refreshTimer = null;
+    }
+}
+
+function hideDockWindowPreviewGroup() {
+    if (!dockWindowPreviewGroupState.container) return;
+    stopDockWindowPreviewGroupRefresh();
+    if (dockWindowPreviewGroupState.renderTimer) {
+        clearTimeout(dockWindowPreviewGroupState.renderTimer);
+        dockWindowPreviewGroupState.renderTimer = null;
+    }
+    dockWindowPreviewGroupState.renderToken += 1;
+    dockWindowPreviewGroupState.container.classList.remove('show');
+    dockWindowPreviewGroupState.container.setAttribute('aria-hidden', 'true');
+    dockWindowPreviewGroupState.activeIcon = null;
+    dockWindowPreviewGroupState.activeAppKey = null;
+    dockWindowPreviewGroupState.windows = [];
+}
+
+function scheduleDockWindowPreviewGroupHide() {
+    if (dockWindowPreviewGroupState.hideTimer) {
+        clearTimeout(dockWindowPreviewGroupState.hideTimer);
+    }
+    dockWindowPreviewGroupState.hideTimer = setTimeout(() => {
+        hideDockWindowPreviewGroup();
+    }, DOCK_WINDOW_PREVIEW_HIDE_DELAY_MS);
+}
+
+function hideDockWindowPreviewAll() {
+    hideDockWindowPreview();
+    hideDockWindowPreviewGroup();
+}
+
+function scheduleDockWindowPreviewHideAll() {
+    if (dockWindowPreviewGroupState.container?.classList.contains('show')) {
+        scheduleDockWindowPreviewGroupHide();
+        return;
+    }
+    scheduleDockWindowPreviewHide();
+}
+
+function refreshDockWindowPreviewGroup() {
+    const token = (dockWindowPreviewGroupState.renderToken += 1);
+    const items = Array.from(dockWindowPreviewGroupState.gridEl?.querySelectorAll('.dock-window-preview-card') || []);
+    if (!items.length) return;
+
+    const renderBatch = async (startIndex) => {
+        if (dockWindowPreviewGroupState.renderToken !== token) return;
+        if (!dockWindowPreviewGroupState.container?.classList.contains('show')) return;
+        const endIndex = Math.min(items.length, startIndex + DOCK_WINDOW_PREVIEW_GROUP_BATCH_SIZE);
+        for (let i = startIndex; i < endIndex; i += 1) {
+            const card = items[i];
+            const windowId = card.dataset.windowId;
+            if (!windowId) continue;
+            const win = document.getElementById(windowId);
+            if (!win) continue;
+            const img = card.querySelector('.dock-window-preview-card-image');
+            const placeholder = card.querySelector('.dock-window-preview-card-placeholder');
+            if (!img) continue;
+            const lastUpdated = dockWindowPreviewCacheTime.get(win) || 0;
+            const now = Date.now();
+            let url = dockWindowPreviewCache.get(win) || null;
+            if (now - lastUpdated > DOCK_WINDOW_PREVIEW_GROUP_CACHE_TTL_MS) {
+                url = await captureDockWindowSnapshot(win, { scale: DOCK_WINDOW_PREVIEW_GROUP_SCALE });
+            }
+            if (url) {
+                img.src = url;
+                card.classList.add('has-image');
+                card.classList.remove('no-image');
+                if (placeholder) placeholder.style.display = 'none';
+            } else {
+                card.classList.add('no-image');
+                card.classList.remove('has-image');
+                if (placeholder) placeholder.style.display = '';
+            }
+        }
+
+        if (endIndex < items.length) {
+            dockWindowPreviewGroupState.renderTimer = setTimeout(() => {
+                renderBatch(endIndex);
+            }, DOCK_WINDOW_PREVIEW_GROUP_BATCH_DELAY_MS);
+        }
+    };
+
+    renderBatch(0);
+}
+
+function showDockWindowPreviewGroupForIcon(iconEl, windows) {
+    if (!iconEl) return;
+    if (!Array.isArray(windows) || windows.length < 2) return;
+
+    const incomingKey = iconEl.dataset.appKey || iconEl.dataset.pinnedApp || iconEl.dataset.app || 'App';
+    if (dockWindowPreviewGroupState.activeAppKey === incomingKey && dockWindowPreviewGroupState.container?.classList.contains('show')) {
+        dockWindowPreviewGroupState.activeIcon = iconEl;
+        positionDockWindowPreviewGroup(iconEl);
+        return;
+    }
+
+    hideDockWindowPreview();
+
+    if (dockWindowPreviewGroupState.hideTimer) {
+        clearTimeout(dockWindowPreviewGroupState.hideTimer);
+        dockWindowPreviewGroupState.hideTimer = null;
+    }
+
+    const container = ensureDockWindowPreviewGroupEl();
+    const appKey = incomingKey;
+    dockWindowPreviewGroupState.activeIcon = iconEl;
+    dockWindowPreviewGroupState.activeAppKey = appKey;
+    const sortedWindows = windows.slice().sort((a, b) => {
+        const ta = parseInt(a?.dataset?.lastFocusedAt || '0', 10);
+        const tb = parseInt(b?.dataset?.lastFocusedAt || '0', 10);
+        return tb - ta;
+    });
+    dockWindowPreviewGroupState.windows = sortedWindows;
+
+    if (dockWindowPreviewGroupState.headerTitleEl) {
+        dockWindowPreviewGroupState.headerTitleEl.textContent = appKey;
+    }
+    if (dockWindowPreviewGroupState.headerCountEl) {
+        dockWindowPreviewGroupState.headerCountEl.textContent = String(windows.length);
+    }
+
+    if (dockWindowPreviewGroupState.gridEl) {
+        dockWindowPreviewGroupState.gridEl.innerHTML = '';
+        sortedWindows.forEach(win => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'dock-window-preview-card';
+            card.dataset.windowId = win.id || '';
+            card.innerHTML = `
+                <div class="dock-window-preview-card-thumb">
+                    <button class="dock-window-preview-card-close" type="button" aria-label="Close window">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                    <img class="dock-window-preview-card-image" alt="Window preview">
+                    <div class="dock-window-preview-card-placeholder">Preview Unavailable</div>
+                </div>
+            `;
+            const cached = dockWindowPreviewCache.get(win);
+            const img = card.querySelector('.dock-window-preview-card-image');
+            const placeholder = card.querySelector('.dock-window-preview-card-placeholder');
+            if (cached && img) {
+                img.src = cached;
+                card.classList.add('has-image');
+                card.classList.remove('no-image');
+                if (placeholder) placeholder.style.display = 'none';
+            }
+            const closeBtn = card.querySelector('.dock-window-preview-card-close');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const closeControl = win.querySelector('.window-control.close');
+                    if (closeControl) {
+                        closeControl.click();
+                    } else {
+                        win.remove();
+                    }
+                    scheduleDockWindowPreviewGroupHide();
+                });
+            }
+            card.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (win.style.display === 'none') {
+                    win.style.display = 'flex';
+                }
+                focusWindow(win);
+                updateWindowAppBarState(win, true, false);
+                hideDockWindowPreviewGroup();
+            });
+            dockWindowPreviewGroupState.gridEl.appendChild(card);
+        });
+    }
+
+    container.classList.add('show');
+    container.setAttribute('aria-hidden', 'false');
+    positionDockWindowPreviewGroup(iconEl);
+
+    const tooltip = iconEl._tooltipElement || iconEl.querySelector('.dock-tooltip');
+    if (tooltip) {
+        tooltip.style.opacity = '0';
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.transform = 'translateY(6px)';
+    }
+
+    refreshDockWindowPreviewGroup();
+    stopDockWindowPreviewGroupRefresh();
+    dockWindowPreviewGroupState.refreshTimer = setInterval(() => {
+        refreshDockWindowPreviewGroup();
+    }, DOCK_WINDOW_PREVIEW_GROUP_CACHE_TTL_MS);
+}
+
+function getDockIconWindows(iconEl) {
+    if (!iconEl) return [];
+    if (iconEl._windows && iconEl._windows.size) {
+        return Array.from(iconEl._windows).filter(win => win && document.body.contains(win));
+    }
+    if (iconEl._window) return [iconEl._window];
+    return [];
+}
+
 function showDockWindowPreviewForIcon(iconEl) {
-    const win = iconEl?._window;
+    const windows = getDockIconWindows(iconEl);
+    if (windows.length > 1) {
+        showDockWindowPreviewGroupForIcon(iconEl, windows);
+        return;
+    }
+    const win = windows[0] || iconEl?._window;
     if (!win) return;
+    hideDockWindowPreviewGroup();
     if (dockWindowPreviewState.hideTimer) {
         clearTimeout(dockWindowPreviewState.hideTimer);
         dockWindowPreviewState.hideTimer = null;
@@ -2249,10 +3271,17 @@ function showDockWindowPreviewForIcon(iconEl) {
     dockWindowPreviewState.activeWindow = win;
     updateDockWindowPreviewContent(win);
     const cached = dockWindowPreviewCache.get(win);
-    setDockWindowPreviewSnapshot(cached || null);
-    container.classList.add('show');
-    container.setAttribute('aria-hidden', 'false');
-    positionDockWindowPreview(iconEl);
+    if (cached) {
+        setDockWindowPreviewSnapshot(cached);
+        container.classList.add('show');
+        container.setAttribute('aria-hidden', 'false');
+        dockWindowPreviewState.pendingShow = false;
+        positionDockWindowPreview(iconEl);
+    } else {
+        dockWindowPreviewState.pendingShow = true;
+        container.classList.remove('show');
+        container.setAttribute('aria-hidden', 'true');
+    }
 
     // Hide any tooltip while the preview is visible.
     const tooltip = iconEl._tooltipElement || iconEl.querySelector('.dock-tooltip');
@@ -2269,132 +3298,406 @@ function showDockWindowPreviewForIcon(iconEl) {
     }, DOCK_WINDOW_PREVIEW_REFRESH_MS);
 }
 
-// Global registry for window app bar icons
+// Global registry for window app bar icons (grouped by app)
 const windowAppBarIcons = new Map();
+const windowAppBarGroups = new Map();
+const windowIdToAppKey = new Map();
+
+function ensureDockItemCountBadge(iconEl) {
+    if (!iconEl) return null;
+    let badge = iconEl.querySelector('.dock-item-count');
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.className = 'dock-item-count';
+        iconEl.appendChild(badge);
+    }
+    return badge;
+}
+
+function updateDockGroupCountBadge(appKey) {
+    const icon = windowAppBarIcons.get(appKey);
+    const group = windowAppBarGroups.get(appKey);
+    if (!icon || !group) return;
+    const count = group.size;
+    const badge = ensureDockItemCountBadge(icon);
+    if (!badge) return;
+    if (count > 1) {
+        badge.textContent = String(count);
+        badge.style.display = 'flex';
+        icon.classList.add('dock-item-multiple');
+    } else {
+        badge.textContent = '';
+        badge.style.display = 'none';
+        icon.classList.remove('dock-item-multiple');
+    }
+}
+
+function updateDockGroupIconState(appKey) {
+    const icon = windowAppBarIcons.get(appKey);
+    const group = windowAppBarGroups.get(appKey);
+    if (!icon || !group) return;
+    let anyFocused = false;
+    let anyVisible = false;
+    let allMinimized = true;
+    group.forEach(win => {
+        if (!win || !document.body.contains(win)) return;
+        const minimized = isWindowMinimized(win) || win.classList.contains('window-desktop-hidden');
+        if (!minimized) {
+            anyVisible = true;
+            allMinimized = false;
+        }
+        if (win.classList.contains('window-focused') && !minimized) {
+            anyFocused = true;
+        }
+    });
+
+    icon.classList.add('dock-item-active');
+    if (anyFocused) {
+        icon.classList.add('dock-item-focused');
+    } else {
+        icon.classList.remove('dock-item-focused');
+    }
+
+    if (allMinimized && anyVisible === false) {
+        icon.classList.add('dock-item-minimized');
+    } else if (allMinimized) {
+        icon.classList.add('dock-item-minimized');
+    } else {
+        icon.classList.remove('dock-item-minimized');
+    }
+}
+
+function getMostRecentWindowForApp(appKey) {
+    const group = windowAppBarGroups.get(appKey);
+    if (!group || group.size === 0) return null;
+    let winner = null;
+    let bestTs = -1;
+    group.forEach(win => {
+        if (!win || !document.body.contains(win)) return;
+        const ts = parseInt(win.dataset.lastFocusedAt || '0', 10);
+        if (ts > bestTs) {
+            bestTs = ts;
+            winner = win;
+        } else if (!winner) {
+            winner = win;
+        }
+    });
+    return winner || Array.from(group)[0] || null;
+}
 
 function addWindowToAppBar(window, options = {}) {
     const dockApps = document.querySelector('.dock-apps');
-    if (!dockApps) return null;
-    
-    // Use window.id as the unique identifier for each window instance
-    // Always prioritize window.id to ensure each window gets its own icon
-    // Try both window.id and window.getAttribute('id') to ensure we get the ID
-    // Force read the ID directly from the DOM element to ensure we get the latest value
+    if (!dockApps || !window) return null;
+
     let windowIdValue = window.id;
     if (!windowIdValue || windowIdValue.trim() === '') {
-        // Try getAttribute as fallback
         windowIdValue = window.getAttribute ? window.getAttribute('id') : '';
     }
-    // If still no ID, generate a unique one
     const appId = (windowIdValue && windowIdValue.trim() !== '') ? windowIdValue : `window-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
+    if (!windowIdValue || windowIdValue.trim() === '') {
+        try {
+            window.id = appId;
+            window.setAttribute('id', appId);
+        } catch (e) {}
+    }
+
     const iconSvg = options.iconSvg || '';
-    
-    // Get window title for tooltip
+    const appKey = (options.appName || options.appKey || getWindowAppKey(window) || appId).toString();
+    window.dataset.appKey = appKey;
+    windowIdToAppKey.set(appId, appKey);
+    if (typeof options.onIconClick === 'function') {
+        window._dockOnClick = options.onIconClick;
+    }
+
     const windowTitleElement = window.querySelector('.window-title');
     let windowTitle = options.label || '';
     if (!windowTitle && windowTitleElement) {
-        // Extract text content, excluding SVG
         const titleClone = windowTitleElement.cloneNode(true);
         const svgElements = titleClone.querySelectorAll('svg');
         svgElements.forEach(svg => svg.remove());
         windowTitle = titleClone.textContent.trim();
     }
-    // Fallback to appId if no title found
     if (!windowTitle) {
-        windowTitle = appId;
+        windowTitle = appKey || appId;
     }
-    
-    // Use the onIconClick directly (it should already be a closure that captures the window)
-    const onIconClick = options.onIconClick || null;
-    
-    // Check if icon already exists for this specific window
-    if (windowAppBarIcons.has(appId)) {
-        // Icon already exists for this window ID, return it
-        return windowAppBarIcons.get(appId);
-    }
-    
-    const appBarIcon = document.createElement('div');
-    appBarIcon.className = 'dock-item dock-item-active';
-    appBarIcon.dataset.app = appId;
-    appBarIcon.innerHTML = `
-        <div class="dock-icon">
-            ${iconSvg}
-        </div>
-        <div class="dock-tooltip tooltip">${windowTitle}</div>
-    `;
-    
-    // Store reference to the specific window
-    appBarIcon._window = window;
-    
-    if (onIconClick) {
-        appBarIcon.addEventListener('click', onIconClick);
-    }
-    
-    dockApps.appendChild(appBarIcon);
-    windowAppBarIcons.set(appId, appBarIcon);
-    
-    // Setup tooltip for this item (must happen after appending to DOM)
-    setupDockItemTooltip(appBarIcon);
 
-    // Live window previews on hover
-    appBarIcon.addEventListener('mouseenter', () => {
-        showDockWindowPreviewForIcon(appBarIcon);
-    });
-    appBarIcon.addEventListener('mousemove', () => {
-        if (dockWindowPreviewState.activeIcon === appBarIcon) {
-            positionDockWindowPreview(appBarIcon);
+    let group = windowAppBarGroups.get(appKey);
+    if (!group) {
+        group = new Set();
+        windowAppBarGroups.set(appKey, group);
+    }
+    group.add(window);
+
+    const existingIcon = windowAppBarIcons.get(appKey);
+    if (existingIcon) {
+        existingIcon._windows = group;
+        existingIcon.dataset.appKey = appKey;
+        updateDockGroupCountBadge(appKey);
+        updateDockGroupIconState(appKey);
+        return existingIcon;
+    }
+
+    let iconEl = null;
+    let pinnedName = null;
+    try {
+        const now = Date.now();
+        const pinnedCandidates = Array.from(dockApps.querySelectorAll('.dock-item-pinned')).filter(el => el.dataset && el.dataset.launchingApp && el.dataset.launchTime);
+        let chosen = null;
+        for (const el of pinnedCandidates) {
+            const launchTime = parseInt(el.dataset.launchTime) || 0;
+            if (now - launchTime <= 5000) {
+                chosen = el;
+                break;
+            }
+        }
+        if (chosen) {
+            pinnedName = chosen.dataset.launchingApp;
+        } else {
+            const pinnedEls = Array.from(dockApps.querySelectorAll('.dock-item-pinned'));
+            const candidate = pinnedEls.find(el => el.dataset && el.dataset.pinnedApp === appKey);
+            if (candidate) {
+                pinnedName = candidate.dataset.pinnedApp;
+                chosen = candidate;
+            }
+        }
+        if (chosen) {
+            const cloned = chosen.cloneNode(true);
+            chosen.parentNode.replaceChild(cloned, chosen);
+            cloned.classList.add('dock-item-active');
+            cloned.classList.remove('dock-item-pinned');
+            if (pinnedName) {
+                cloned.dataset.pinnedApp = pinnedName;
+            }
+            cloned.dataset.appKey = appKey;
+            cloned._windows = group;
+            iconEl = cloned;
+
+            const appObj = (typeof apps !== 'undefined' && Array.isArray(apps)) ? apps.find(a => a.name === pinnedName) : null;
+            if (appObj) {
+                cloned.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const rect = cloned.getBoundingClientRect();
+                    showStartMenuAppContextMenu(appObj, { controlRect: rect });
+                });
+            }
+        }
+    } catch (e) {
+        iconEl = null;
+    }
+
+    if (!iconEl) {
+        const appBarIcon = document.createElement('div');
+        appBarIcon.className = 'dock-item dock-item-active';
+        appBarIcon.dataset.appKey = appKey;
+        appBarIcon.innerHTML = `
+            <div class="dock-icon">
+                ${iconSvg}
+            </div>
+            <div class="dock-tooltip tooltip">${appKey}</div>
+        `;
+        iconEl = appBarIcon;
+        dockApps.appendChild(appBarIcon);
+    }
+
+    iconEl._windows = group;
+    ensureDockItemCountBadge(iconEl);
+
+    iconEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const target = getMostRecentWindowForApp(appKey);
+        if (target) {
+            if (typeof target._dockOnClick === 'function') {
+                target._dockOnClick();
+            } else {
+                toggleWindowFromDock(target);
+            }
         }
     });
-    appBarIcon.addEventListener('mouseleave', () => {
-        scheduleDockWindowPreviewHide();
+
+    setupDockItemTooltip(iconEl);
+
+    iconEl.addEventListener('mouseenter', () => {
+        showDockWindowPreviewForIcon(iconEl);
     });
-    appBarIcon.addEventListener('mousedown', () => {
-        hideDockWindowPreview();
+    iconEl.addEventListener('mousemove', () => {
+        if (dockWindowPreviewState.activeIcon === iconEl) {
+            positionDockWindowPreview(iconEl);
+        }
+        if (dockWindowPreviewGroupState.activeIcon === iconEl) {
+            positionDockWindowPreviewGroup(iconEl);
+        }
     });
-    
-    // Apply label visibility setting
+    iconEl.addEventListener('mouseleave', () => {
+        scheduleDockWindowPreviewHideAll();
+    });
+    iconEl.addEventListener('mousedown', () => {
+        hideDockWindowPreviewAll();
+    });
+
+    windowAppBarIcons.set(appKey, iconEl);
+    updateDockGroupCountBadge(appKey);
+    updateDockGroupIconState(appKey);
     updateDockTooltipsVisibility();
-    
-    return appBarIcon;
+    return iconEl;
 }
 
-function removeWindowFromAppBar(appId) {
-    if (windowAppBarIcons.has(appId)) {
-        const icon = windowAppBarIcons.get(appId);
-        if (icon && icon.parentNode) {
-            icon.remove();
+function removeWindowFromAppBar(appIdOrWindow) {
+    let win = null;
+    let windowId = null;
+    let appKey = null;
+
+    if (appIdOrWindow instanceof Element) {
+        win = appIdOrWindow;
+        windowId = win.id || (win.getAttribute ? win.getAttribute('id') : null);
+    } else if (typeof appIdOrWindow === 'string') {
+        windowId = appIdOrWindow;
+        win = document.getElementById(windowId);
+    }
+
+    if (win) {
+        appKey = win.dataset.appKey || windowIdToAppKey.get(windowId) || getWindowAppKey(win);
+    }
+    if (!appKey && windowId) {
+        appKey = windowIdToAppKey.get(windowId);
+    }
+    if (!appKey) return;
+
+    const group = windowAppBarGroups.get(appKey);
+    if (group) {
+        if (win) {
+            group.delete(win);
+        } else if (windowId) {
+            for (const w of group) {
+                if (w && w.id === windowId) {
+                    group.delete(w);
+                    break;
+                }
+            }
         }
-        windowAppBarIcons.delete(appId);
-        if (dockWindowPreviewState.activeIcon === icon) {
-            hideDockWindowPreview();
+    }
+    if (windowId) {
+        windowIdToAppKey.delete(windowId);
+    }
+
+    if (!group || group.size === 0) {
+        windowAppBarGroups.delete(appKey);
+        const icon = windowAppBarIcons.get(appKey);
+        if (icon) {
+            const pinnedName = icon.dataset && icon.dataset.pinnedApp;
+            if (pinnedName && icon.parentNode) {
+                console.debug('removeWindowFromAppBar: restoring pinned icon for', pinnedName, 'from appKey', appKey);
+                const slug = pinnedName.toLowerCase().replace(/\s+/g, '-');
+                const pinnedId = `pinned-${slug}`;
+                const cloned = icon.cloneNode(true);
+                cloned.dataset.app = pinnedId;
+                cloned.classList.remove('dock-item-active', 'active', 'dock-item-focused', 'dock-item-minimized', 'dock-item-active', 'dock-item-multiple');
+                cloned.classList.add('dock-item-pinned');
+                try { delete cloned._windows; } catch (e) { cloned._windows = null; }
+                icon.parentNode.replaceChild(cloned, icon);
+
+                const appObj = (typeof apps !== 'undefined' && Array.isArray(apps)) ? apps.find(a => a.name === pinnedName) : null;
+                if (appObj) {
+                    cloned.addEventListener('click', () => {
+                        try {
+                            cloned.dataset.launchingApp = appObj.name;
+                            cloned.dataset.launchTime = String(Date.now());
+                            console.debug('pinned restored: click -> set launching markers for', appObj.name);
+                            setTimeout(() => {
+                                try { delete cloned.dataset.launchingApp; } catch (e) {}
+                                try { delete cloned.dataset.launchTime; } catch (e) {}
+                            }, 5000);
+                        } catch (e) {}
+
+                        try { showNotification(`Launching ${appObj.name}...`, 'info', 1200); } catch (e) {}
+
+                        try {
+                            if (appObj.name === 'Files' && typeof initFileExplorer === 'function') {
+                                const opener = initFileExplorer();
+                                if (typeof opener === 'function') {
+                                    console.debug('pinned restored: direct initFileExplorer opener found, invoking');
+                                    opener();
+                                    return;
+                                }
+                            }
+                        } catch (e) {
+                            console.debug('pinned restored: direct open attempt failed', e);
+                        }
+
+                        console.debug('pinned restored: invoking openStartMenuApp for', appObj.name);
+                        openStartMenuApp(appObj);
+                    });
+                    cloned.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const rect = cloned.getBoundingClientRect();
+                        showStartMenuAppContextMenu(appObj, { controlRect: rect });
+                    });
+                }
+                setupDockItemTooltip(cloned);
+            } else if (icon && icon.parentNode) {
+                icon.remove();
+            }
+            if (dockWindowPreviewState.activeIcon === icon || dockWindowPreviewGroupState.activeIcon === icon) {
+                hideDockWindowPreviewAll();
+            }
         }
+        windowAppBarIcons.delete(appKey);
+    } else {
+        updateDockGroupCountBadge(appKey);
+        updateDockGroupIconState(appKey);
     }
 }
 
 function updateWindowAppBarState(window, isFocused, isMinimized = false) {
-    // Find the app bar icon for this specific window
-    windowAppBarIcons.forEach((icon, appId) => {
-        if (icon._window === window) {
-            // Always keep dock-item-active for open windows
-            icon.classList.add('dock-item-active');
-            
-            // Add focused class for the focused window
-            if (isFocused) {
-                icon.classList.add('dock-item-focused');
-            } else {
-                icon.classList.remove('dock-item-focused');
-            }
-            
-            // Add minimized class for minimized windows
-            if (isMinimized) {
-                icon.classList.add('dock-item-minimized');
-            } else {
-                icon.classList.remove('dock-item-minimized');
-            }
-        }
-    });
+    if (!window) return;
+    const windowId = window.id || (window.getAttribute ? window.getAttribute('id') : null);
+    const appKey = window.dataset.appKey || windowIdToAppKey.get(windowId) || getWindowAppKey(window);
+    if (!appKey) return;
+    if (isFocused) {
+        window.dataset.lastFocusedAt = String(Date.now());
+    }
+    updateDockGroupIconState(appKey);
+    updateDockGroupCountBadge(appKey);
 }
+
+// Ensure app bar icons are cleaned up if a window element is removed from the DOM
+function initWindowRemovalObserver() {
+    if (window._windowRemovalObserverInit) return;
+
+    const tryInit = () => {
+        const container = document.getElementById('windows-container');
+        if (!container) {
+            // Retry shortly if windows container is not yet available
+            setTimeout(tryInit, 300);
+            return;
+        }
+
+        window._windowRemovalObserverInit = true;
+
+        const mo = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                for (const node of m.removedNodes) {
+                    try {
+                        if (!(node instanceof Element)) continue;
+                        if (node.classList && node.classList.contains('window')) {
+                            try { removeWindowFromAppBar(node); } catch (e) {}
+                        }
+                    } catch (e) {
+                        // Non-fatal; continue processing other nodes
+                    }
+                }
+            }
+        });
+
+        mo.observe(container, { childList: true });
+    };
+
+    tryInit();
+}
+
+// Initialize observer asap
+initWindowRemovalObserver();
 
 function isWindowMinimized(win) {
     if (!win) return false;
@@ -2411,6 +3714,7 @@ function isWindowMinimized(win) {
 // - Else if focused: minimize
 // - Else: focus
 function toggleWindowFromDock(win, saveFn = null) {
+    console.debug('toggleWindowFromDock: invoked for', win && win.id);
     if (!win) return;
     const minimized = isWindowMinimized(win);
     const focused = win.classList.contains('window-focused') && !minimized;
@@ -2431,6 +3735,7 @@ function toggleWindowFromDock(win, saveFn = null) {
     if (typeof saveFn === 'function') {
         try { saveFn(); } catch (e) {}
     }
+    console.debug('toggleWindowFromDock: result display=', win.style.display, 'focused=', win.classList.contains('window-focused'));
 }
 
 // Global Properties Window (shared by Desktop + Files)
@@ -2702,6 +4007,7 @@ let suppressFocusPersistence = false;
 function focusWindow(window) {
     const windowsContainer = document.getElementById('windows-container');
     if (!windowsContainer) return;
+    console.debug('focusWindow: attempting to focus', window && window.id);
     
     // Check if window is minimized
     const isMinimized = window.style.display === 'none';
@@ -2726,6 +4032,7 @@ function focusWindow(window) {
     });
     window.style.zIndex = windowZIndexCounter.toString();
     window.classList.add('window-focused');
+    try { window.dataset.lastFocusedAt = String(Date.now()); } catch (e) {}
     
     // Save focused window ID to localStorage (unless suppressed during restore)
     if (!suppressFocusPersistence && window.id) {
@@ -2734,6 +4041,7 @@ function focusWindow(window) {
     
     // Update App bar icon state
     updateWindowAppBarState(window, true, isMinimized);
+    console.debug('focusWindow: focused', window && window.id, 'z=', window.style.zIndex, 'display=', window.style.display);
 }
 
 // Ensure clicking anywhere inside a window focuses it (like a real desktop OS).
@@ -3289,6 +4597,89 @@ function initSettingsWindow() {
         window.id = windowId;
         window.setAttribute('id', windowId); // Set both property and attribute
         window.setAttribute('data-settings-window', 'true');
+        const runtimeIsDev = !!(globalThis.pilkOSRuntime && globalThis.pilkOSRuntime.isDev);
+        const devSidebarItem = runtimeIsDev ? `
+                            <div class="sidebar-item" data-page="developer">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M16 18l6-6-6-6"></path>
+                                    <path d="M8 6l-6 6 6 6"></path>
+                                </svg>
+                                <span>Developer Options</span>
+                            </div>
+` : '';
+        const devPage = runtimeIsDev ? `
+                        <div class="settings-page" id="developer-page">
+                            <div class="settings-section">
+                                <h3>Developer Options</h3>
+                                <div class="settings-item">
+                                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                        <button id="simulate-update-btn" class="settings-action-btn">Simulate Update</button>
+                                        <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Test update flow without packaged build</span>
+                                    </div>
+                                </div>
+                                <div class="settings-item" style="margin-top: 10px;">
+                                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                        <div style="display: flex; align-items: center; gap: 10px;">
+                                            <span class="settings-toggle-label">Show Debug Panel</span>
+                                            <div class="settings-toggle" id="dev-show-debug-panel-toggle">
+                                                <div class="settings-toggle-slider"></div>
+                                            </div>
+                                        </div>
+                                        <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Mirror console.debug output to in-app debug panel</span>
+                                    </div>
+                                </div>
+                                <div class="settings-item" style="margin-top: 10px;">
+                                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                        <button id="dev-battery-charging-btn" class="settings-action-btn">Test Charging</button>
+                                        <button id="dev-battery-discharging-btn" class="settings-action-btn">Test Discharging</button>
+                                        <button id="dev-battery-reset-btn" class="settings-action-btn">Reset Battery</button>
+                                        <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Force battery status for UI testing</span>
+                                    </div>
+                                </div>
+                                <div class="settings-item" style="margin-top: 10px;">
+                                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                        <button id="dev-weather-clear-override-btn" class="settings-action-btn">Clear Weather Override</button>
+                                        <button id="dev-weather-sun-btn" class="settings-action-btn">Clear</button>
+                                        <button id="dev-weather-few-clouds-btn" class="settings-action-btn">Few Clouds</button>
+                                        <button id="dev-weather-scattered-clouds-btn" class="settings-action-btn">Scattered Clouds</button>
+                                        <button id="dev-weather-broken-clouds-btn" class="settings-action-btn">Broken Clouds</button>
+                                        <button id="dev-weather-overcast-btn" class="settings-action-btn">Overcast</button>
+                                        <button id="dev-weather-rain-btn" class="settings-action-btn">Rain</button>
+                                        <button id="dev-weather-thunder-btn" class="settings-action-btn">Thunderstorm</button>
+                                        <button id="dev-weather-snow-btn" class="settings-action-btn">Snow</button>
+                                        <button id="dev-weather-fog-btn" class="settings-action-btn">Fog</button>
+                                        <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Force weather icon for UI testing</span>
+                                    </div>
+                                </div>
+                                <div class="settings-item" style="margin-top: 10px;">
+                                    <div style="display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;">
+                                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                                            <label for="dev-qs-dot-wifi" style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Quick Settings Wi-Fi dot</label>
+                                            <select id="dev-qs-dot-wifi">
+                                                <option value="auto">Auto</option>
+                                                <option value="none">None</option>
+                                                <option value="general">Blue (General)</option>
+                                                <option value="low">Yellow (Low)</option>
+                                                <option value="medium">Orange (Medium)</option>
+                                                <option value="high">Red (High)</option>
+                                            </select>
+                                        </div>
+                                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                                            <label for="dev-qs-dot-battery" style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Quick Settings Battery dot</label>
+                                            <select id="dev-qs-dot-battery">
+                                                <option value="auto">Auto</option>
+                                                <option value="none">None</option>
+                                                <option value="low">Yellow (Low)</option>
+                                                <option value="medium">Orange (Medium)</option>
+                                                <option value="high">Red (High)</option>
+                                            </select>
+                                        </div>
+                                        <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px; align-self: center;">Quick Settings dot overrides (testing only)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+` : '';
 
         // Restore minimized state early (before inserting into DOM) to avoid flicker on refresh.
         const isMinimized = !!(restoreState && restoreState.minimized);
@@ -3498,6 +4889,7 @@ function initSettingsWindow() {
                                 </svg>
                                 <span>System</span>
                             </div>
+${devSidebarItem}
                             </div>
                         <div class="settings-sidebar-footer" style="position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(25, 25, 35, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: rgba(255, 255, 255, 0.9); z-index: 10; pointer-events: all; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); transition: all 0.2s;" data-page="about">
                             <span id="settings-os-name" style="color: rgba(255, 255, 255, 0.8);">PilkOS</span>
@@ -3632,14 +5024,6 @@ function initSettingsWindow() {
                                 <div class="settings-toggle-container">
                                     <span class="settings-toggle-label">Auto-Hide Dock</span>
                                     <div class="settings-toggle" id="dock-auto-hide-toggle">
-                                        <div class="settings-toggle-slider"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="settings-item">
-                                <div class="settings-toggle-container">
-                                    <span class="settings-toggle-label">Show App Labels</span>
-                                    <div class="settings-toggle active" id="taskbar-show-labels-toggle">
                                         <div class="settings-toggle-slider"></div>
                                     </div>
                                 </div>
@@ -4040,7 +5424,20 @@ function initSettingsWindow() {
                                     <p style="color: rgba(255, 255, 255, 0.7); font-size: 13px;">© 2026 PilkOS</p>
                                 </div>
                             </div>
+                            <div class="settings-section">
+                                <h3>Updates</h3>
+                                <div class="settings-item">
+                                    <div class="settings-update-row">
+                                        <div class="settings-update-actions">
+                                            <button id="check-updates-btn" class="settings-action-btn">Check For Updates</button>
+                                        </div>
+                                        <span id="update-status" class="settings-update-status">Idle</span>
+                                    </div>
+                                    <div id="update-dev-hint" style="display: none; margin-top: 8px; color: rgba(255, 255, 255, 0.55); font-size: 12px;">Install is disabled in dev builds.</div>
+                                </div>
+                            </div>
                         </div>
+${devPage}
                     </div>
                 </div>
             </div>
@@ -4058,6 +5455,7 @@ function initSettingsWindow() {
         makeWindowResizable(window, { onResize: saveSettingsWindowsState });
         setupWindowControls(window);
         setupSettingsSidebar(window);
+        setupUpdateControls(window);
         setupUserManagement(window);
         
         // Restore active sidebar page or default to "users" if window was closed
@@ -4073,6 +5471,9 @@ function initSettingsWindow() {
         } else {
             // New window - clear any closed flag and default to users
             localStorage.removeItem(`settingsWindowClosed_${windowId}`);
+        }
+        if (!runtimeIsDev && activePageToRestore === 'developer') {
+            activePageToRestore = 'users';
         }
         
         // Set the active sidebar item and page
@@ -4274,7 +5675,8 @@ function initSettingsWindow() {
                     'language': 'Language & Region',
                     'power': 'Power',
                     'applications': 'Applications',
-                    'about': 'About'
+                    'about': 'About',
+                    'developer': 'Developer Options'
                 };
                 
                 pages.forEach(page => {
@@ -4461,6 +5863,397 @@ function initSettingsWindow() {
                 }
             });
         }
+    }
+
+    function setupUpdateControls(window) {
+        const checkButton = window.querySelector('#check-updates-btn');
+        const simulateButton = window.querySelector('#simulate-update-btn');
+        const devChargeBtn = window.querySelector('#dev-battery-charging-btn');
+        const devDischargeBtn = window.querySelector('#dev-battery-discharging-btn');
+        const devBatteryResetBtn = window.querySelector('#dev-battery-reset-btn');
+        const statusLabel = window.querySelector('#update-status');
+        const devHint = window.querySelector('#update-dev-hint');
+        const weatherClearOverrideBtn = window.querySelector('#dev-weather-clear-override-btn');
+        const weatherSunBtn = window.querySelector('#dev-weather-sun-btn');
+        const weatherFewCloudsBtn = window.querySelector('#dev-weather-few-clouds-btn');
+        const weatherScatteredCloudsBtn = window.querySelector('#dev-weather-scattered-clouds-btn');
+        const weatherBrokenCloudsBtn = window.querySelector('#dev-weather-broken-clouds-btn');
+        const weatherOvercastBtn = window.querySelector('#dev-weather-overcast-btn');
+        const weatherRainBtn = window.querySelector('#dev-weather-rain-btn');
+        const weatherThunderBtn = window.querySelector('#dev-weather-thunder-btn');
+        const weatherSnowBtn = window.querySelector('#dev-weather-snow-btn');
+        const weatherFogBtn = window.querySelector('#dev-weather-fog-btn');
+        const devQuickWifiDotSelect = window.querySelector('#dev-qs-dot-wifi');
+        const devQuickBatteryDotSelect = window.querySelector('#dev-qs-dot-battery');
+        const quickSettingsIcon = document.getElementById('quick-settings-icon');
+        const quickSettingsUpdateBtn = document.getElementById('quick-settings-update-btn');
+
+        if (!checkButton || !statusLabel) return;
+
+        if (devHint) {
+            const runtimeIsDev = !!(globalThis.pilkOSRuntime && globalThis.pilkOSRuntime.isDev);
+            devHint.style.display = runtimeIsDev ? 'block' : 'none';
+        }
+
+        const setStatus = (text) => {
+            statusLabel.textContent = text;
+        };
+
+        const setCheckLabel = (label) => {
+            if (!checkButton) return;
+            checkButton.textContent = label;
+        };
+
+        const setInstallVisible = (visible) => {
+            // No-op: install button removed
+        };
+
+        const persistUpdateBadge = (enabled) => {
+            try { localStorage.setItem('updatesReadyToInstall', enabled ? 'true' : 'false'); } catch (e) {}
+        };
+
+        const setUpdateBadge = (enabled) => {
+            if (quickSettingsIcon) {
+                quickSettingsIcon.classList.toggle('has-update', enabled);
+            }
+            if (quickSettingsUpdateBtn) {
+                quickSettingsUpdateBtn.classList.toggle('has-update', enabled);
+                quickSettingsUpdateBtn.style.display = enabled ? 'flex' : 'none';
+                if (quickSettingsUpdateBtn._tooltipElement) {
+                    quickSettingsUpdateBtn._tooltipElement.textContent = enabled ? 'Update Available' : '';
+                }
+            }
+            persistUpdateBadge(enabled);
+            if (typeof window.updateQuickSettingsNotifications === 'function') {
+                window.updateQuickSettingsNotifications();
+            }
+        };
+
+        const QUICK_SETTINGS_DOT_OVERRIDE_PREFIX = 'quickSettingsDotOverride_';
+        const WIFI_DOT_OVERRIDE_VALUES = new Set(['auto', 'none', 'general', 'low', 'medium', 'high']);
+        const BATTERY_DOT_OVERRIDE_VALUES = new Set(['auto', 'none', 'low', 'medium', 'high']);
+
+        const readDotOverride = (tileId, allowedValues) => {
+            try {
+                const raw = localStorage.getItem(`${QUICK_SETTINGS_DOT_OVERRIDE_PREFIX}${tileId}`) || 'auto';
+                return allowedValues.has(raw) ? raw : 'auto';
+            } catch (e) {
+                return 'auto';
+            }
+        };
+
+        const writeDotOverride = (tileId, value) => {
+            try {
+                if (!value || value === 'auto') {
+                    localStorage.removeItem(`${QUICK_SETTINGS_DOT_OVERRIDE_PREFIX}${tileId}`);
+                } else {
+                    localStorage.setItem(`${QUICK_SETTINGS_DOT_OVERRIDE_PREFIX}${tileId}`, value);
+                }
+            } catch (e) {}
+        };
+        const applyDotOverride = (tileId, value, allowedValues) => {
+            const nextValue = allowedValues.has(value) ? value : 'auto';
+            writeDotOverride(tileId, nextValue);
+            if (typeof window.updateQuickSettingsNotifications === 'function') {
+                window.updateQuickSettingsNotifications();
+            } else if (typeof window.updateQuickSettingsPanel === 'function') {
+                window.updateQuickSettingsPanel();
+            }
+        };
+
+        const updatesApi = window.pilkOSUpdates;
+        let autoCheckTimer = null;
+        const scheduleAutoCheck = () => {
+            if (autoCheckTimer) return;
+            autoCheckTimer = setInterval(async () => {
+                if (!updatesApi || checkButton.disabled) return;
+                try {
+                    await updatesApi.check();
+                } catch (error) {
+                    // Silent background failure
+                }
+            }, 60 * 1000);
+        };
+        let mockTimer = null;
+        const clearMockTimer = () => {
+            if (mockTimer) {
+                clearTimeout(mockTimer);
+                mockTimer = null;
+            }
+        };
+
+        const runMockUpdateFlow = () => {
+            clearMockTimer();
+            setInstallVisible(false);
+            setUpdateBadge(false);
+            setStatus('Checking for updates...');
+            mockTimer = setTimeout(() => {
+                setStatus('Update found. Downloading...');
+                let progress = 0;
+                const tick = () => {
+                    progress = Math.min(100, progress + 20);
+                    setStatus(`Downloading... ${progress}%`);
+                    if (progress >= 100) {
+                        setStatus('Update ready to install.');
+                        setInstallVisible(true);
+                        setUpdateBadge(true);
+                        return;
+                    }
+                    mockTimer = setTimeout(tick, 350);
+                };
+                tick();
+            }, 700);
+        };
+        if (devChargeBtn) {
+            devChargeBtn.addEventListener('click', () => {
+                try {
+                    if (typeof globalThis.applyBatteryOverride === 'function') {
+                        globalThis.applyBatteryOverride({
+                            level: 86,
+                            charging: true,
+                            timeText: '45m Until Full'
+                        });
+                    }
+                } catch (e) {}
+            });
+        }
+
+        if (devDischargeBtn) {
+            devDischargeBtn.addEventListener('click', () => {
+                try {
+                    if (typeof globalThis.applyBatteryOverride === 'function') {
+                        globalThis.applyBatteryOverride({
+                            level: 42,
+                            charging: false,
+                            timeText: '1h 20m Remaining'
+                        });
+                    }
+                } catch (e) {}
+            });
+        }
+
+        if (devBatteryResetBtn) {
+            devBatteryResetBtn.addEventListener('click', () => {
+                try {
+                    if (typeof globalThis.clearBatteryOverride === 'function') {
+                        globalThis.clearBatteryOverride();
+                    }
+                } catch (e) {}
+            });
+        }
+
+        if (weatherClearOverrideBtn) {
+            weatherClearOverrideBtn.addEventListener('click', () => {
+                try {
+                    if (typeof globalThis.clearWeatherIconOverride === 'function') {
+                        globalThis.clearWeatherIconOverride();
+                    }
+                } catch (e) {}
+            });
+        }
+
+        const setWeatherOverride = (code) => {
+            try {
+                if (typeof globalThis.setWeatherIconOverride === 'function') {
+                    globalThis.setWeatherIconOverride(code);
+                }
+            } catch (e) {}
+        };
+
+        if (weatherSunBtn) {
+            weatherSunBtn.addEventListener('click', () => setWeatherOverride(800));
+        }
+        if (weatherFewCloudsBtn) {
+            weatherFewCloudsBtn.addEventListener('click', () => setWeatherOverride(801));
+        }
+        if (weatherScatteredCloudsBtn) {
+            weatherScatteredCloudsBtn.addEventListener('click', () => setWeatherOverride(802));
+        }
+        if (weatherBrokenCloudsBtn) {
+            weatherBrokenCloudsBtn.addEventListener('click', () => setWeatherOverride(803));
+        }
+        if (weatherOvercastBtn) {
+            weatherOvercastBtn.addEventListener('click', () => setWeatherOverride(804));
+        }
+        if (weatherRainBtn) {
+            weatherRainBtn.addEventListener('click', () => setWeatherOverride(500));
+        }
+        if (weatherThunderBtn) {
+            weatherThunderBtn.addEventListener('click', () => setWeatherOverride(200));
+        }
+        if (weatherSnowBtn) {
+            weatherSnowBtn.addEventListener('click', () => setWeatherOverride(600));
+        }
+        if (weatherFogBtn) {
+            weatherFogBtn.addEventListener('click', () => setWeatherOverride(701));
+        }
+
+        if (devQuickWifiDotSelect) {
+            devQuickWifiDotSelect.value = readDotOverride('wifi', WIFI_DOT_OVERRIDE_VALUES);
+            const applyWifiOverride = () => applyDotOverride('wifi', devQuickWifiDotSelect.value, WIFI_DOT_OVERRIDE_VALUES);
+            devQuickWifiDotSelect.addEventListener('change', applyWifiOverride);
+            devQuickWifiDotSelect.addEventListener('input', applyWifiOverride);
+        }
+
+        if (devQuickBatteryDotSelect) {
+            devQuickBatteryDotSelect.value = readDotOverride('battery', BATTERY_DOT_OVERRIDE_VALUES);
+            const applyBatteryOverride = () => applyDotOverride('battery', devQuickBatteryDotSelect.value, BATTERY_DOT_OVERRIDE_VALUES);
+            devQuickBatteryDotSelect.addEventListener('change', applyBatteryOverride);
+            devQuickBatteryDotSelect.addEventListener('input', applyBatteryOverride);
+        }
+
+        // Developer: Show/Hide in-app debug panel toggle
+        const devShowDebugToggle = window.querySelector('#dev-show-debug-panel-toggle');
+        if (devShowDebugToggle) {
+            try {
+                const saved = localStorage.getItem('dev_showDebugPanel');
+                // Default: visible only if panel already exists, else hidden
+                const exists = !!document.getElementById('pilkos-debug-panel');
+                const enabled = saved === null ? exists : saved === 'true';
+                devShowDebugToggle.classList.toggle('active', !!enabled);
+                if (enabled) {
+                    try { ensureDebugPanel(); } catch (e) {}
+                } else {
+                    const panel = document.getElementById('pilkos-debug-panel');
+                    if (panel) panel.style.display = 'none';
+                }
+            } catch (e) {}
+
+            devShowDebugToggle.addEventListener('click', function() {
+                this.classList.toggle('active');
+                const next = this.classList.contains('active');
+                try { localStorage.setItem('dev_showDebugPanel', next ? 'true' : 'false'); } catch (e) {}
+                if (next) {
+                    try { const p = ensureDebugPanel(); if (p) p.style.display = ''; } catch (e) {}
+                } else {
+                    const p = document.getElementById('pilkos-debug-panel');
+                    if (p) p.style.display = 'none';
+                }
+            });
+        }
+
+        const persistedUpdate = localStorage.getItem('updatesReadyToInstall') === 'true';
+        if (!updatesApi) {
+            if (persistedUpdate) {
+                setStatus('Update ready to install.');
+                setInstallVisible(true);
+                setUpdateBadge(true);
+                setCheckLabel('Install Updates');
+            } else {
+                setStatus('Already Up To Date');
+                setInstallVisible(false);
+                setUpdateBadge(false);
+                setCheckLabel('Check For Updates');
+            }
+            checkButton.disabled = false;
+            if (simulateButton) {
+                simulateButton.style.display = 'inline-flex';
+                simulateButton.addEventListener('click', () => {
+                    runMockUpdateFlow();
+                });
+            }
+            checkButton.addEventListener('click', () => {
+                clearMockTimer();
+                setInstallVisible(false);
+                setStatus('Checking for updates...');
+                mockTimer = setTimeout(() => {
+                    setStatus('Already Up To Date');
+                    setUpdateBadge(false);
+                }, 700);
+            });
+            return;
+        }
+
+
+        checkButton.addEventListener('click', async () => {
+            setStatus('Checking for updates...');
+            setInstallVisible(false);
+            setUpdateBadge(false);
+            try {
+                await updatesApi.check();
+            } catch (error) {
+                setStatus('Update check failed');
+            }
+        });
+        scheduleAutoCheck();
+        // Initial background check to sync badge/status with real availability.
+        updatesApi.check().catch(() => {});
+
+        if (simulateButton) {
+            simulateButton.addEventListener('click', () => {
+                runMockUpdateFlow();
+            });
+        }
+
+        if (persistedUpdate) {
+            setUpdateBadge(true);
+            setInstallVisible(true);
+            setStatus('Update ready to install.');
+            setCheckLabel('Install Updates');
+        }
+
+        updatesApi.onStatus((payload) => {
+            const state = payload?.state;
+            if (!state) return;
+
+            switch (state) {
+                case 'checking':
+                    setStatus('Checking for updates...');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'available':
+                    setStatus('Update found. Downloading...');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'not-available':
+                    setStatus('Already Up To Date');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'download-progress':
+                    if (typeof payload?.detail?.percent === 'number') {
+                        setStatus(`Downloading... ${payload.detail.percent}%`);
+                    } else {
+                        setStatus('Downloading update...');
+                    }
+                    setInstallVisible(false);
+                    break;
+                case 'downloaded':
+                    setStatus('Update ready to install.');
+                    setInstallVisible(true);
+                    setUpdateBadge(true);
+                    setCheckLabel('Install Updates');
+                    if (payload?.detail?.version) {
+                        try { localStorage.setItem('updatesReadyVersion', String(payload.detail.version)); } catch (e) {}
+                    }
+                    break;
+                case 'installing':
+                    setStatus('Installing update...');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'disabled':
+                    setStatus(payload?.detail?.message || 'Updates available in packaged builds only.');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'error':
+                    setStatus(payload?.detail?.message || 'Update failed.');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                default:
+                    break;
+            }
+        });
     }
     
     function setupUserManagement(window) {
@@ -5292,33 +7085,6 @@ function initSettingsWindow() {
             });
         }
         
-        const taskbarShowLabelsToggle = window.querySelector('#taskbar-show-labels-toggle');
-        if (taskbarShowLabelsToggle) {
-            // Load saved state or use default (enabled)
-            const savedState = localStorage.getItem('taskbarShowLabels');
-            const shouldBeActive = savedState !== null 
-                ? savedState === 'true' 
-                : true; // Default to enabled
-            
-            // Set initial state based on saved preference
-            if (shouldBeActive) {
-                taskbarShowLabelsToggle.classList.add('active');
-            } else {
-                taskbarShowLabelsToggle.classList.remove('active');
-            }
-            
-            // Apply setting immediately when Settings window is created
-            updateDockTooltipsVisibility();
-            
-            taskbarShowLabelsToggle.addEventListener('click', function() {
-                this.classList.toggle('active');
-                const isEnabled = this.classList.contains('active');
-                localStorage.setItem('taskbarShowLabels', isEnabled.toString());
-                // Update all dock tooltips visibility
-                updateDockTooltipsVisibility();
-            });
-        }
-        
         // Setup all other toggles with localStorage persistence
         const toggleConfigs = [
             { id: 'sound-system-sounds-toggle', key: 'soundSystemSounds', defaultActive: true },
@@ -6013,13 +7779,13 @@ function initSettingsWindow() {
                     if (version.major !== undefined && version.minor !== undefined && version.patch !== undefined) {
                         osVersionElement.textContent = `v${version.major}.${version.minor}.${version.patch}`;
                     } else {
-                        osVersionElement.textContent = 'v0.1.3';
+                        osVersionElement.textContent = `v${globalThis.pilkOSVersionString || '0.1.3'}`;
                     }
                 } catch (e) {
-                    osVersionElement.textContent = 'v0.1.3';
+                    osVersionElement.textContent = `v${globalThis.pilkOSVersionString || '0.1.3'}`;
                 }
             } else {
-                osVersionElement.textContent = 'v0.1.3';
+                osVersionElement.textContent = `v${globalThis.pilkOSVersionString || '0.1.3'}`;
             }
         }
     }
@@ -8063,6 +9829,7 @@ function initFileExplorer() {
     }
     
     function createFileExplorerWindow(initialPath = null, restoreState = null) {
+        console.debug('createFileExplorerWindow called; restoreState=', !!restoreState, 'initialPath=', initialPath);
         const windowId = restoreState ? restoreState.windowId : `file-explorer-window-${fileExplorerWindowCount++}`;
         const window = document.createElement('div');
         window.className = 'window';
@@ -14356,7 +16123,7 @@ function initPlayer() {
         const windowId = restoreState && restoreState.windowId ? restoreState.windowId : `player-window-${initPlayer._count++}`;
 
         const win = document.createElement('div');
-        win.className = 'window';
+        win.className = 'window screen-recorder-window';
         win.id = windowId;
         win.setAttribute('data-player-window', 'true');
         win.tabIndex = 0;
@@ -14891,9 +16658,6 @@ function initPlayer() {
         // Window controls
         const closeBtn = win.querySelector('.window-control.close');
         const minimizeBtn = win.querySelector('.window-control.minimize');
-        const maximizeBtn = win.querySelector('.window-control.maximize');
-        let isMaximized = false;
-        let originalPos = null;
 
         if (closeBtn) {
             closeBtn.addEventListener('click', (e) => {
@@ -15010,6 +16774,261 @@ function initPlayer() {
 
     return function openPlayer(initial = null) {
         return createPlayerWindow(initial);
+    };
+}
+
+function initScreenRecorder() {
+    const windowsContainer = document.getElementById('windows-container');
+    const dockApps = document.querySelector('.dock-apps');
+
+    if (!windowsContainer || !dockApps) {
+        setTimeout(() => initScreenRecorder(), 100);
+        return;
+    }
+
+    if (typeof initScreenRecorder._count !== 'number') {
+        initScreenRecorder._count = 0;
+    }
+
+    const RECORDER_ICON_24 = `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"></circle>
+            <circle cx="12" cy="12" r="4"></circle>
+        </svg>
+    `;
+
+    function createScreenRecorderWindow() {
+        const windowId = `screen-recorder-window-${initScreenRecorder._count++}`;
+        const win = document.createElement('div');
+        win.className = 'window screen-recorder-window';
+        win.id = windowId;
+        win.setAttribute('data-screen-recorder-window', 'true');
+        win.style.width = 'auto';
+        win.style.height = 'auto';
+        win.style.minWidth = '0';
+        win.style.minHeight = '0';
+
+        win.innerHTML = `
+            <div class="window-titlebar window-header">
+                <div class="window-title"></div>
+                <div class="window-controls">
+                    <div class="window-control minimize" title="Minimize">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </div>
+                    <div class="window-control close" title="Close">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            <div class="window-content screen-recorder-content">
+                <div class="screen-recorder-controls">
+                    <button class="screen-recorder-btn screen-recorder-btn-icon" data-recorder-action="start" type="button" aria-label="Start">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="6"></circle>
+                        </svg>
+                    </button>
+                    <button class="screen-recorder-btn screen-recorder-btn-icon" data-recorder-action="pause" type="button" aria-label="Pause">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="6" y="4" width="4" height="16"></rect>
+                            <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                    </button>
+                    <button class="screen-recorder-btn screen-recorder-btn-icon" data-recorder-action="stop" type="button" aria-label="Stop">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="7" y="7" width="10" height="10"></rect>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `;
+
+        windowsContainer.appendChild(win);
+        makeWindowDraggable(win);
+
+        addWindowToAppBar(win, {
+            iconSvg: RECORDER_ICON_24,
+            label: 'Capture',
+            onIconClick: () => toggleWindowFromDock(win)
+        });
+
+        const statusEl = null;
+        const preview = null;
+        const startBtn = win.querySelector('[data-recorder-action="start"]');
+        const pauseBtn = win.querySelector('[data-recorder-action="pause"]');
+        const stopBtn = win.querySelector('[data-recorder-action="stop"]');
+
+        const state = {
+            status: 'idle',
+            recorder: null,
+            stream: null,
+            chunks: []
+        };
+        win._screenRecorderState = state;
+
+        const updateUi = () => {
+            if (startBtn) startBtn.disabled = state.status === 'recording';
+            if (pauseBtn) pauseBtn.disabled = state.status === 'idle';
+            if (stopBtn) stopBtn.disabled = state.status === 'idle';
+            if (typeof window.updateQuickSettingsPanel === 'function') {
+                window.updateQuickSettingsPanel();
+            }
+        };
+
+        const stopTracks = () => {
+            if (state.stream) {
+                state.stream.getTracks().forEach(track => track.stop());
+            }
+            state.stream = null;
+        };
+
+        const finalizeRecording = async () => {
+            if (!state.chunks.length) return;
+            const type = state.recorder?.mimeType || 'video/webm';
+            const blob = new Blob(state.chunks, { type });
+            const filename = getScreenRecordingFileName();
+            try {
+                const fs = await initFileSystem();
+                const recordingsPath = await ensurePilkOsRecordingsFolder(fs);
+                await fs.createFile(recordingsPath, filename, blob, 'video');
+                await refreshFileSystemViews(recordingsPath);
+                showNotification(`Saved to ${recordingsPath}/${filename}`, 'success', 3500);
+            } catch (err) {
+                showNotification('Failed to save screen recording to Videos\\Recordings.', 'error', 4500);
+                console.warn('Screen recording save failed:', err);
+            }
+        };
+
+        const startRecording = async () => {
+            if (state.status === 'recording') return;
+            if (state.status === 'paused' && state.recorder) {
+                state.recorder.resume();
+                state.status = 'recording';
+                updateUi();
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                state.stream = stream;
+                state.chunks = [];
+                const recorder = new MediaRecorder(stream);
+                state.recorder = recorder;
+                recorder.ondataavailable = (e) => {
+                    if (e.data && e.data.size > 0) state.chunks.push(e.data);
+                };
+                recorder.onstop = () => {
+                    finalizeRecording();
+                    stopTracks();
+                    state.recorder = null;
+                    state.status = 'idle';
+                    updateUi();
+                };
+                recorder.start();
+                state.status = 'recording';
+                updateUi();
+            } catch (err) {
+                stopTracks();
+                state.recorder = null;
+                state.status = 'idle';
+                updateUi();
+                const name = err && err.name ? String(err.name) : '';
+                const message = err && err.message ? String(err.message) : String(err);
+                if (name === 'NotAllowedError' || /permission/i.test(message)) {
+                    showNotification('Screen recording failed: Permission denied. Allow screen capture in the browser prompt and try again.', 'error', 5500);
+                } else {
+                    showNotification(`Screen recording failed: ${message}`, 'error', 4500);
+                }
+            }
+        };
+
+        const togglePause = () => {
+            if (!state.recorder) return;
+            if (state.status === 'recording') {
+                state.recorder.pause();
+                state.status = 'paused';
+            } else if (state.status === 'paused') {
+                state.recorder.resume();
+                state.status = 'recording';
+            }
+            updateUi();
+        };
+
+        const stopRecording = () => {
+            if (!state.recorder) return;
+            state.recorder.stop();
+        };
+
+        win._screenRecorderControls = { start: startRecording, pause: togglePause, stop: stopRecording };
+
+        startBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            startRecording();
+        });
+        pauseBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePause();
+        });
+        stopBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            stopRecording();
+        });
+
+        const closeBtn = win.querySelector('.window-control.close');
+        const minimizeBtn = win.querySelector('.window-control.minimize');
+        const maximizeBtn = win.querySelector('.window-control.maximize');
+        let isMaximized = false;
+        let originalPos = null;
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                stopRecording();
+                stopTracks();
+                const id = win.id;
+                win.remove();
+                if (id) removeWindowFromAppBar(id);
+                if (typeof window.updateQuickSettingsPanel === 'function') {
+                    window.updateQuickSettingsPanel();
+                }
+            });
+        }
+
+        if (minimizeBtn) {
+            minimizeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const minimized = win.style.display === 'none';
+                if (minimized) {
+                    win.style.display = 'flex';
+                    focusWindow(win);
+                    updateWindowAppBarState(win, true, false);
+                } else {
+                    win.style.display = 'none';
+                    win.classList.remove('window-focused');
+                    updateWindowAppBarState(win, false, true);
+                }
+            });
+        }
+
+
+        focusWindow(win);
+        updateUi();
+        (async () => {
+            try {
+                const fs = await initFileSystem();
+                await ensurePilkOsRecordingsFolder(fs);
+            } catch (err) {
+                console.warn('Capture: unable to ensure Recordings folder:', err);
+            }
+        })();
+        return win;
+    }
+
+    return function openScreenRecorder() {
+        createScreenRecorderWindow();
     };
 }
 
@@ -19058,6 +21077,7 @@ function initDesktopContextMenu() {
         }
         
         e.preventDefault();
+        closeAllMenus();
         
         // Update toggle icons menu state before showing
         updateToggleIconsMenu();
@@ -19891,6 +21911,7 @@ async function openEditorWindow(path, fileName, left = '200px', top = '100px', w
     `;
     
     windowsContainer.appendChild(window);
+        console.debug('createFileExplorerWindow: appended window', windowId, 'display=', window.style.display);
     
     // Function to update status bar (lines, characters, file size)
     // Define this early so it's available for the async file loading
@@ -22379,8 +24400,223 @@ function initStartMenu() {
         { name: 'Calculate', path: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2 M8 6h8 M8 10h2 M12 10h2 M8 14h2 M12 14h2 M8 18h2 M12 18h2' },
         { name: 'Player', path: 'M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20z M10 8l6 4-6 4V8z' },
         { name: 'Editor', path: 'M4 6h16 M4 12h16 M4 18h16' },
-        { name: 'Tasks', path: 'M3 3h18v18H3z M9 3v18 M3 9h18' }
+        { name: 'Tasks', path: 'M3 3h18v18H3z M9 3v18 M3 9h18' },
+        { name: 'Capture', path: 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18 M12 8a4 4 0 1 1 0 8a4 4 0 0 1 0-8' }
     ];
+
+    const DOCK_PINNED_APPS_KEY = 'dockPinnedApps';
+    let pinnedApps = [];
+
+    function loadPinnedApps() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(DOCK_PINNED_APPS_KEY) || '[]');
+            if (Array.isArray(saved)) {
+                pinnedApps = saved.filter(name => apps.some(app => app.name === name));
+            } else {
+                pinnedApps = [];
+            }
+        } catch (e) {
+            pinnedApps = [];
+        }
+    }
+
+    function savePinnedApps() {
+        try {
+            localStorage.setItem(DOCK_PINNED_APPS_KEY, JSON.stringify(pinnedApps));
+        } catch (e) {}
+    }
+
+    function isAppPinned(name) {
+        return pinnedApps.includes(name);
+    }
+
+    function buildDockIconSvg(app) {
+        return `
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="${app.path}"></path>
+            </svg>
+        `;
+    }
+
+    function launchPinnedApp(item) {
+        try {
+            const name = item.dataset.pinnedApp || (item.querySelector('.dock-tooltip') && item.querySelector('.dock-tooltip').textContent) || null;
+            if (!name) return;
+            // Set transient launching markers so addWindowToAppBar can reuse this icon
+            try {
+                item.dataset.launchingApp = name;
+                item.dataset.launchTime = String(Date.now());
+                setTimeout(() => {
+                    try { delete item.dataset.launchingApp; } catch (e) {}
+                    try { delete item.dataset.launchTime; } catch (e) {}
+                }, 5000);
+            } catch (e) {}
+
+            const appObj = (typeof apps !== 'undefined' && Array.isArray(apps)) ? apps.find(a => a.name === name) : null;
+            if (appObj) {
+                openStartMenuApp(appObj);
+            }
+        } catch (err) {
+            console.debug('dock pinned launch error', err);
+        }
+    }
+
+    function renderPinnedDockApps() {
+        const dockApps = document.querySelector('.dock-apps');
+        if (!dockApps) return;
+        dockApps.querySelectorAll('.dock-item-pinned').forEach(el => el.remove());
+
+        const insertBefore = dockApps.querySelector('.dock-item:not(.dock-item-pinned)');
+        pinnedApps.forEach(name => {
+            const app = apps.find(item => item.name === name);
+            if (!app) return;
+            const pinnedIcon = document.createElement('div');
+            pinnedIcon.className = 'dock-item dock-item-pinned';
+            pinnedIcon.dataset.app = `pinned-${name.toLowerCase().replace(/\s+/g, '-')}`;
+            // Keep the original app name handy on the element so delegated handlers can find it
+            pinnedIcon.dataset.pinnedApp = app.name;
+            pinnedIcon.innerHTML = `
+                <div class="dock-icon">
+                    ${buildDockIconSvg(app)}
+                </div>
+                <div class="dock-tooltip tooltip">${app.name}</div>
+            `;
+            // Clicks are handled by a delegated handler on `.dock-apps` to avoid duplicate
+            // listeners and make behavior resilient to DOM replacements. Context menu
+            // handling is delegated as well so right-click works even after icons are
+            // recreated.
+            if (insertBefore) {
+                dockApps.insertBefore(pinnedIcon, insertBefore);
+            } else {
+                dockApps.appendChild(pinnedIcon);
+            }
+            setupDockItemTooltip(pinnedIcon);
+        });
+
+        // Add delegated click handler once to make pinned app launches robust against DOM replacements
+        if (!dockApps.dataset.delegateClickInit) {
+            dockApps.dataset.delegateClickInit = 'true';
+            dockApps.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return;
+                const item = e.target.closest('.dock-item-pinned');
+                if (!item) return;
+                e.stopPropagation();
+                item.dataset.launchHandled = 'true';
+                launchPinnedApp(item);
+                setTimeout(() => {
+                    try { delete item.dataset.launchHandled; } catch (err) {}
+                }, 0);
+            });
+            dockApps.addEventListener('click', (e) => {
+                const item = e.target.closest('.dock-item-pinned');
+                if (!item) return;
+                e.stopPropagation();
+                if (item.dataset.launchHandled === 'true') return;
+                launchPinnedApp(item);
+            });
+            dockApps.addEventListener('contextmenu', (e) => {
+                const item = e.target.closest('.dock-item-pinned');
+                if (!item) return;
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    const name = item.dataset.pinnedApp || (item.querySelector('.dock-tooltip') && item.querySelector('.dock-tooltip').textContent) || null;
+                    if (!name) return;
+                    const appObj = (typeof apps !== 'undefined' && Array.isArray(apps)) ? apps.find(a => a.name === name) : null;
+                    if (!appObj) return;
+                    const rect = item.getBoundingClientRect();
+                    showStartMenuAppContextMenu(appObj, { controlRect: rect });
+                } catch (err) {
+                    console.debug('dock delegated contextmenu error', err);
+                }
+            });
+        }
+
+        updateDockTooltipsVisibility();
+    }
+
+    function hideStartMenuAppContextMenu() {
+        const existing = document.querySelector('.start-menu-context-menu');
+        if (existing) existing.remove();
+    }
+
+    function showStartMenuAppContextMenu(app, xOrOptions, y) {
+        hideStartMenuAppContextMenu();
+        const menu = document.createElement('div');
+        menu.className = 'context-menu start-menu-context-menu show';
+        const pinned = isAppPinned(app.name);
+        const pinSvg = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 10c0 6-9 13-9 13S3 16 3 10a9 9 0 1118 0z"></path>
+                <circle cx="12" cy="10" r="2"></circle>
+            </svg>`;
+
+        const unpinSvg = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 10c0 6-9 13-9 13S3 16 3 10a9 9 0 1118 0z"></path>
+                <circle cx="12" cy="10" r="2"></circle>
+                <line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>`;
+
+        menu.innerHTML = `
+            <div class="context-menu-item" data-action="${pinned ? 'unpin' : 'pin'}">
+                <div class="context-menu-icon">${pinned ? unpinSvg : pinSvg}</div>
+                <span>${pinned ? 'Unpin from Dock' : 'Pin to Dock'}</span>
+            </div>
+        `;
+        document.body.appendChild(menu);
+
+        const menuWidth = 220;
+        const menuHeight = 120;
+        // If caller passed a control rect (pinned dock icon), center menu on the icon.
+        if (xOrOptions && typeof xOrOptions === 'object' && xOrOptions.controlRect) {
+            positionDockMenuForControl(menu, xOrOptions.controlRect, { menuWidth, menuHeight });
+        } else {
+            let left = xOrOptions || 0;
+            let top = y || 0;
+            if (left + menuWidth > window.innerWidth) {
+                left = window.innerWidth - menuWidth - 10;
+            }
+            if (top + menuHeight > window.innerHeight) {
+                top = window.innerHeight - menuHeight - 10;
+            }
+            menu.style.left = `${Math.max(10, left)}px`;
+            menu.style.top = `${Math.max(10, top)}px`;
+        }
+
+        const onClose = (e) => {
+            if (menu.contains(e.target)) return;
+            hideStartMenuAppContextMenu();
+            document.removeEventListener('mousedown', onClose, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+        };
+        const onKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                hideStartMenuAppContextMenu();
+                document.removeEventListener('mousedown', onClose, true);
+                document.removeEventListener('keydown', onKeyDown, true);
+            }
+        };
+        document.addEventListener('mousedown', onClose, true);
+        document.addEventListener('keydown', onKeyDown, true);
+
+        menu.addEventListener('click', (e) => {
+            const item = e.target.closest('.context-menu-item');
+            if (!item) return;
+            if (item.dataset.action === 'pin') {
+                if (!pinnedApps.includes(app.name)) {
+                    pinnedApps = [...pinnedApps, app.name];
+                    savePinnedApps();
+                    renderPinnedDockApps();
+                }
+            } else if (item.dataset.action === 'unpin') {
+                pinnedApps = pinnedApps.filter(name => name !== app.name);
+                savePinnedApps();
+                renderPinnedDockApps();
+            }
+            hideStartMenuAppContextMenu();
+        });
+    }
 
     const START_MENU_SEARCH_DELAY_MS = 250;
     const START_MENU_MAX_FS_RESULTS = 20;
@@ -22429,6 +24665,11 @@ function initStartMenu() {
             if (openTaskManager) {
                 // Fresh open: center like other apps (do not reuse saved geometry).
                 openTaskManager({ restore: false });
+            }
+        } else if (app.name === 'Capture') {
+            const openRecorder = initScreenRecorder();
+            if (openRecorder) {
+                openRecorder();
             }
         }
     }
@@ -22483,6 +24724,12 @@ function initStartMenu() {
             
             appItem.addEventListener('click', function() {
                 openStartMenuApp(app);
+            });
+
+            appItem.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                showStartMenuAppContextMenu(app, e.pageX, e.pageY);
             });
             
             startMenuApps.appendChild(appItem);
@@ -22628,6 +24875,10 @@ function initStartMenu() {
         return item;
     }
     
+    // Initialize dock pins
+    loadPinnedApps();
+    renderPinnedDockApps();
+
     // Initialize apps
     renderApps();
     
@@ -22800,6 +25051,9 @@ function initWeather() {
     const weatherIcon = document.getElementById('weather-icon');
     const weatherTemp = document.getElementById('weather-temp');
     const isElectron = navigator.userAgent.toLowerCase().includes('electron');
+    const weatherMenu = document.getElementById('weather-menu');
+    const weatherControlItem = document.querySelector('.dock-weather');
+    const WEATHER_FORECAST_KEY = 'weatherForecast3Day';
     
     if (!weatherIcon || !weatherTemp) return;
     
@@ -22808,6 +25062,208 @@ function initWeather() {
     const API_KEY = ''; // Replace with your OpenWeatherMap API key for better reliability
     
     // Load cached weather data immediately on initialization
+    const WEATHER_ICON_OVERRIDE_KEY = 'weatherIconOverride';
+    const WEATHER_CONDITION_TEXT_KEY = 'weatherConditionText';
+    const getWeatherIconOverride = () => {
+        const raw = localStorage.getItem(WEATHER_ICON_OVERRIDE_KEY);
+        if (!raw) return null;
+        const parsed = parseInt(raw, 10);
+        return Number.isNaN(parsed) ? null : parsed;
+    };
+    const formatWeatherConditionText = (value) => {
+        if (!value) return '';
+        return String(value)
+            .trim()
+            .split(/\s+/)
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+    };
+    const normalizeWeatherConditionText = (value) => {
+        const formatted = formatWeatherConditionText(value);
+        if (!formatted) return '';
+        const lower = formatted.toLowerCase();
+        if (lower.includes('few clouds')) return 'Few Clouds';
+        if (lower.includes('scattered clouds')) return 'Scattered Clouds';
+        if (lower.includes('broken clouds')) return 'Broken Clouds';
+        if (lower.includes('overcast')) return 'Overcast';
+        if (lower.includes('partly') && lower.includes('cloud')) return 'Few Clouds';
+        if (lower.includes('mostly') && lower.includes('cloud')) return 'Scattered Clouds';
+        return formatted;
+    };
+    const weatherMenuEls = weatherMenu ? {
+        location: document.getElementById('weather-menu-location'),
+        days: [0, 1, 2].map((index) => ({
+            label: document.getElementById(`weather-menu-label-${index}`),
+            icon: document.getElementById(`weather-menu-icon-${index}`),
+            temp: document.getElementById(`weather-menu-temp-${index}`),
+            desc: document.getElementById(`weather-menu-desc-${index}`)
+        }))
+    } : null;
+
+    const formatWeatherMenuLabel = (value) => {
+        const text = String(value || '').trim();
+        if (!text) return text;
+        return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+    };
+
+    const getWeatherMenuLabel = (index) => {
+        if (index === 0) return formatWeatherMenuLabel('Today');
+        if (index === 1) return formatWeatherMenuLabel('Tomorrow');
+        const date = new Date();
+        date.setDate(date.getDate() + index);
+        return formatWeatherMenuLabel(date.toLocaleDateString(undefined, { weekday: 'long' }));
+    };
+
+    const getStandardConditionCode = (desc, code) => {
+        if (desc.includes('sunny') || desc.includes('clear') || code === 113) {
+            return 800;
+        } else if (desc.includes('few clouds')) {
+            return 801;
+        } else if (desc.includes('scattered clouds')) {
+            return 802;
+        } else if (desc.includes('broken clouds')) {
+            return 803;
+        } else if (desc.includes('overcast')) {
+            return 804;
+        } else if (desc.includes('partly') && desc.includes('cloud')) {
+            return 801;
+        } else if (desc.includes('mostly') && desc.includes('cloud')) {
+            return 802;
+        } else if (desc.includes('cloud')) {
+            return 803;
+        } else if (desc.includes('rain') || desc.includes('drizzle') || (code >= 266 && code <= 321)) {
+            return 500;
+        } else if (desc.includes('thunder') || desc.includes('storm') || (code >= 350 && code <= 395)) {
+            return 200;
+        } else if (desc.includes('snow') || (code >= 335 && code <= 339) || code >= 399) {
+            return 600;
+        } else if (desc.includes('fog') || desc.includes('mist') || (code >= 143 && code <= 263)) {
+            return 701;
+        }
+        return 800;
+    };
+    const getRainIntensityLabel = ({ rawDesc = '', code, precipMm, rainVolume }) => {
+        const lower = String(rawDesc).toLowerCase();
+        const rainByText = lower.includes('rain') || lower.includes('drizzle') || lower.includes('shower');
+        const rainByCode = (code >= 500 && code <= 531) || (code >= 266 && code <= 321) || (code >= 353 && code <= 359);
+        const amount = Number.isFinite(precipMm)
+            ? precipMm
+            : (Number.isFinite(rainVolume) ? rainVolume : null);
+        if (!rainByText && !rainByCode && !(amount > 0)) {
+            return null;
+        }
+        const heavyByCode = (code >= 502 && code <= 531) || (code >= 302 && code <= 308) || (code >= 356 && code <= 359);
+        const heavyByAmount = amount !== null && amount >= 2.5;
+        return heavyByCode || heavyByAmount ? 'Heavy Rain' : 'Light Rain';
+    };
+
+    const saveWeatherForecast = (days, unit) => {
+        if (!Array.isArray(days)) return;
+        const payload = {
+            unit: unit || localStorage.getItem('weatherUnit') || 'F',
+            timestamp: Date.now(),
+            days
+        };
+        localStorage.setItem(WEATHER_FORECAST_KEY, JSON.stringify(payload));
+        updateWeatherMenu();
+    };
+
+    const loadWeatherForecast = () => {
+        try {
+            const raw = localStorage.getItem(WEATHER_FORECAST_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || !Array.isArray(parsed.days)) return null;
+            return parsed;
+        } catch (e) {
+            return null;
+        }
+    };
+
+    const formatForecastTemp = (day, unit) => {
+        if (!day) return '--';
+        const high = Number.isFinite(day.high) ? Math.round(day.high) : null;
+        const low = Number.isFinite(day.low) ? Math.round(day.low) : null;
+        if (high !== null && low !== null) return `${high}° / ${low}° ${unit}`;
+        if (high !== null) return `${high}° ${unit}`;
+        if (low !== null) return `${low}° ${unit}`;
+        return '--';
+    };
+
+    const updateWeatherMenu = () => {
+        if (!weatherMenuEls) return;
+        const locationName = localStorage.getItem('weatherLocationName');
+        if (weatherMenuEls.location) {
+            weatherMenuEls.location.textContent = locationName && locationName.trim()
+                ? locationName
+                : 'Weather';
+        }
+        const forecast = loadWeatherForecast();
+        const unit = forecast?.unit || localStorage.getItem('weatherUnit') || 'F';
+        let fallbackWeather = null;
+        try {
+            const raw = localStorage.getItem('weatherData');
+            fallbackWeather = raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            fallbackWeather = null;
+        }
+        const fallbackDesc = formatWeatherConditionText(
+            localStorage.getItem(WEATHER_CONDITION_TEXT_KEY)
+        );
+
+        weatherMenuEls.days.forEach((dayEl, index) => {
+            if (dayEl.label) {
+                dayEl.label.textContent = getWeatherMenuLabel(index);
+            }
+            const dayData = forecast?.days?.[index] || null;
+            const descText = dayData?.desc || (index === 0 ? fallbackDesc : '');
+            if (dayEl.desc) {
+                dayEl.desc.textContent = descText || '--';
+            }
+            if (dayEl.temp) {
+                if (dayData) {
+                    dayEl.temp.textContent = formatForecastTemp(dayData, unit);
+                } else if (index === 0 && fallbackWeather && Number.isFinite(fallbackWeather.temp)) {
+                    dayEl.temp.textContent = `${Math.round(fallbackWeather.temp)}° ${unit}`;
+                } else {
+                    dayEl.temp.textContent = '--';
+                }
+            }
+            if (dayEl.icon) {
+                if (dayData && Number.isFinite(dayData.iconCode)) {
+                    dayEl.icon.innerHTML = getWeatherIcon(dayData.iconCode);
+                } else if (index === 0 && fallbackWeather && Number.isFinite(fallbackWeather.conditionCode)) {
+                    dayEl.icon.innerHTML = getWeatherIcon(fallbackWeather.conditionCode);
+                } else {
+                    dayEl.icon.innerHTML = '';
+                }
+            }
+        });
+    };
+    window.updateWeatherMenu = updateWeatherMenu;
+    const setWeatherConditionText = (value) => {
+        const normalized = normalizeWeatherConditionText(value);
+        if (normalized) {
+            localStorage.setItem(WEATHER_CONDITION_TEXT_KEY, normalized);
+        }
+        if (typeof globalThis.updateWeatherTooltip === 'function') {
+            globalThis.updateWeatherTooltip();
+        }
+    };
+    const getWeatherConditionLabelFromCode = (code) => {
+        if (code === 800) return 'Clear';
+        if (code === 801) return 'Few Clouds';
+        if (code === 802) return 'Scattered Clouds';
+        if (code === 803) return 'Broken Clouds';
+        if (code === 804) return 'Overcast';
+        if (code >= 200 && code <= 232) return 'Thunderstorm';
+        if (code >= 300 && code <= 321) return 'Drizzle';
+        if (code >= 500 && code <= 531) return 'Rain';
+        if (code >= 600 && code <= 622) return 'Snow';
+        if (code >= 701 && code <= 781) return 'Fog';
+        return '';
+    };
+
     function loadCachedWeather() {
         const cachedWeather = localStorage.getItem('weatherData');
         if (cachedWeather) {
@@ -22821,6 +25277,11 @@ function initWeather() {
                         weatherTemp.textContent = `${temp}° ${unit}`;
                         if (weatherData.conditionCode !== undefined) {
                 weatherIcon.innerHTML = getWeatherIcon(weatherData.conditionCode);
+                            setWeatherConditionText(getWeatherConditionLabelFromCode(weatherData.conditionCode));
+                        }
+                        const overrideCode = getWeatherIconOverride();
+                        if (overrideCode !== null) {
+                            weatherIcon.innerHTML = getWeatherIcon(overrideCode);
                         }
                 return true;
                     }
@@ -22844,6 +25305,28 @@ function initWeather() {
         };
         localStorage.setItem('weatherData', JSON.stringify(weatherData));
     }
+
+    function applyWeatherIconOverride(code) {
+        const parsed = Number(code);
+        if (!Number.isFinite(parsed)) return;
+        localStorage.setItem(WEATHER_ICON_OVERRIDE_KEY, String(Math.round(parsed)));
+        const label = getWeatherConditionLabelFromCode(Math.round(parsed));
+        if (label) {
+            setWeatherConditionText(label);
+        }
+        if (weatherIcon) {
+            weatherIcon.innerHTML = getWeatherIcon(Math.round(parsed));
+        }
+    }
+
+    function clearWeatherIconOverride() {
+        localStorage.removeItem(WEATHER_ICON_OVERRIDE_KEY);
+        localStorage.removeItem(WEATHER_CONDITION_TEXT_KEY);
+        loadCachedWeather();
+    }
+
+    window.setWeatherIconOverride = applyWeatherIconOverride;
+    window.clearWeatherIconOverride = clearWeatherIconOverride;
     
     // Debug: Check if elements are found
     if (!weatherIcon || !weatherTemp) {
@@ -22864,7 +25347,7 @@ function initWeather() {
                 <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
             </svg>`;
         }
-        // Clouds
+        // Clouds (few, scattered, broken, overcast)
         if (conditionCode >= 801 && conditionCode <= 804) {
             return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
@@ -22882,14 +25365,17 @@ function initWeather() {
         // Thunderstorm
         if (conditionCode >= 200 && conditionCode <= 232) {
             return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                <path d="M20 16.5A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path>
+                <polygon points="13 10 9 17 12 17 10 22 16 14 13 14"></polygon>
             </svg>`;
         }
         // Snow
         if (conditionCode >= 600 && conditionCode <= 622) {
             return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
-                <circle cx="12" cy="12" r="2"></circle>
+                <path d="M12 2v20"></path>
+                <path d="M4.93 4.93l14.14 14.14"></path>
+                <path d="M2 12h20"></path>
+                <path d="M4.93 19.07l14.14-14.14"></path>
             </svg>`;
         }
         // Mist/Fog
@@ -23015,6 +25501,103 @@ function initWeather() {
             await getIPLocation();
         }
     }
+
+    function updateWeatherForecastFromWttr(data, unit) {
+        if (!data || !Array.isArray(data.weather)) return;
+        const isFahrenheit = unit === 'F';
+        const days = data.weather.slice(0, 3).map((day) => {
+            const maxTemp = isFahrenheit ? parseFloat(day.maxtempF) : parseFloat(day.maxtempC);
+            const minTemp = isFahrenheit ? parseFloat(day.mintempF) : parseFloat(day.mintempC);
+            const hourly = Array.isArray(day.hourly) ? day.hourly : [];
+            const representative = hourly.find((entry) => entry.time === '1200') || hourly[2] || hourly[0] || {};
+            const rawDesc = representative.weatherDesc?.[0]?.value || '';
+            const desc = rawDesc.toLowerCase();
+            const rawCode = parseInt(representative.weatherCode || day.hourly?.[0]?.weatherCode || '', 10);
+            const iconCode = getStandardConditionCode(desc, Number.isFinite(rawCode) ? rawCode : 800);
+            const precipMm = parseFloat(representative.precipMM || day.totalPrecipMM || '');
+            const rainLabel = getRainIntensityLabel({
+                rawDesc,
+                code: Number.isFinite(rawCode) ? rawCode : 0,
+                precipMm: Number.isNaN(precipMm) ? null : precipMm
+            });
+            const displayDesc = rainLabel || formatWeatherConditionText(rawDesc);
+            return {
+                high: Number.isNaN(maxTemp) ? null : Math.round(maxTemp),
+                low: Number.isNaN(minTemp) ? null : Math.round(minTemp),
+                desc: displayDesc,
+                iconCode
+            };
+        });
+        saveWeatherForecast(days, unit);
+    }
+
+    function updateWeatherForecastFromOpenWeather(lat, lon, unit) {
+        if (!API_KEY || API_KEY === '') return;
+        const urls = [
+            `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=imperial`,
+            `http://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=imperial`
+        ];
+        fetchJsonWithFallback(urls)
+            .then(data => {
+                if (!data || !Array.isArray(data.list)) return;
+                const now = new Date();
+                now.setHours(0, 0, 0, 0);
+                const dailyMap = new Map();
+                data.list.forEach(entry => {
+                    const entryDate = new Date(entry.dt * 1000);
+                    if (entryDate < now) return;
+                    const dateKey = entryDate.toDateString();
+                    if (!dailyMap.has(dateKey)) {
+                        dailyMap.set(dateKey, []);
+                    }
+                    dailyMap.get(dateKey).push(entry);
+                });
+                const days = [];
+                for (const [dateKey, entries] of dailyMap) {
+                    if (days.length >= 3) break;
+                    let high = null;
+                    let low = null;
+                    let bestEntry = entries[0];
+                    let bestDiff = Infinity;
+                    entries.forEach(entry => {
+                        const temp = Number(entry.main?.temp);
+                        if (Number.isFinite(temp)) {
+                            high = high === null ? temp : Math.max(high, temp);
+                            low = low === null ? temp : Math.min(low, temp);
+                        }
+                        const entryDate = new Date(entry.dt * 1000);
+                        const diff = Math.abs(entryDate.getHours() - 12);
+                        if (diff < bestDiff) {
+                            bestDiff = diff;
+                            bestEntry = entry;
+                        }
+                    });
+                    const rawDesc = bestEntry?.weather?.[0]?.description || '';
+                    const desc = rawDesc.toLowerCase();
+                    const iconCode = Number(bestEntry?.weather?.[0]?.id) || getStandardConditionCode(desc, 800);
+                    const rainVolume = Number(bestEntry?.rain?.['3h'] ?? bestEntry?.rain?.['1h']);
+                    const rainLabel = getRainIntensityLabel({
+                        rawDesc,
+                        code: Number(bestEntry?.weather?.[0]?.id) || 0,
+                        rainVolume: Number.isFinite(rainVolume) ? rainVolume : null
+                    });
+                    const convertedHigh = unit === 'C' && high !== null ? (high - 32) * 5 / 9 : high;
+                    const convertedLow = unit === 'C' && low !== null ? (low - 32) * 5 / 9 : low;
+                    days.push({
+                        high: convertedHigh === null ? null : Math.round(convertedHigh),
+                        low: convertedLow === null ? null : Math.round(convertedLow),
+                        desc: rainLabel || formatWeatherConditionText(rawDesc),
+                        iconCode
+                    });
+                }
+                if (days.length) {
+                    saveWeatherForecast(days, unit);
+                }
+            })
+            .catch(() => {
+                // Ignore forecast errors to keep current weather working.
+            });
+    }
     
     function updateWeather(lat, lon) {
         // Use OpenWeatherMap if API key is provided, otherwise use free alternative
@@ -23028,6 +25611,7 @@ function initWeather() {
                 .then(data => {
                     const temp = Math.round(data.main.temp);
                     const conditionCode = data.weather[0].id;
+                    const conditionText = data.weather[0]?.description || '';
                     const region = data.sys?.state || data.sys?.region || data.sys?.country || '';
                     setWeatherLocationName(data.name, region);
                     
@@ -23035,10 +25619,15 @@ function initWeather() {
                     determineTemperatureUnit(lat, lon).then(unit => {
                         // Only update if we successfully got new data
                         weatherTemp.textContent = `${temp}° ${unit}`;
-                        weatherIcon.innerHTML = getWeatherIcon(conditionCode);
+                        setWeatherConditionText(conditionText || getWeatherConditionLabelFromCode(conditionCode));
+                        const overrideCode = getWeatherIconOverride();
+                        const iconCode = overrideCode !== null ? overrideCode : conditionCode;
+                        weatherIcon.innerHTML = getWeatherIcon(iconCode);
                         
                         // Save to cache for next load
                         saveWeatherData(temp, conditionCode, unit);
+                        updateWeatherForecastFromOpenWeather(lat, lon, unit);
+                        updateWeatherMenu();
                     });
                 })
                 .catch(error => {
@@ -23160,28 +25749,22 @@ function initWeather() {
                     }
                     // Map wttr.in weather codes/descriptions to icons
                     if (weatherIcon) {
-                        const iconHTML = getWeatherIconFromDescription(conditionCode, desc);
-                        weatherIcon.innerHTML = iconHTML;
+                        const overrideCode = getWeatherIconOverride();
+                        if (overrideCode !== null) {
+                            weatherIcon.innerHTML = getWeatherIcon(overrideCode);
+                        } else {
+                            const iconHTML = getWeatherIconFromDescription(conditionCode, desc);
+                            weatherIcon.innerHTML = iconHTML;
+                        }
                     }
-                    
                     // Convert wttr.in condition to standard code for caching
-                    let standardConditionCode = 800; // Default to clear
-                    if (desc.includes('sunny') || desc.includes('clear') || conditionCode === 113) {
-                        standardConditionCode = 800;
-                    } else if (desc.includes('cloud') || (conditionCode >= 116 && conditionCode <= 122)) {
-                        standardConditionCode = 803;
-                    } else if (desc.includes('rain') || desc.includes('drizzle') || (conditionCode >= 266 && conditionCode <= 321)) {
-                        standardConditionCode = 500;
-                    } else if (desc.includes('thunder') || desc.includes('storm') || (conditionCode >= 350 && conditionCode <= 395)) {
-                        standardConditionCode = 200;
-                    } else if (desc.includes('snow') || (conditionCode >= 335 && conditionCode <= 339) || conditionCode >= 399) {
-                        standardConditionCode = 600;
-                    } else if (desc.includes('fog') || desc.includes('mist') || (conditionCode >= 143 && conditionCode <= 263)) {
-                        standardConditionCode = 701;
-                    }
+                    const standardConditionCode = getStandardConditionCode(desc, conditionCode);
+                    setWeatherConditionText(desc || getWeatherConditionLabelFromCode(standardConditionCode));
                     
                     // Save to cache for next load (include unit)
                     saveWeatherData(temp, standardConditionCode, unit);
+                    updateWeatherForecastFromWttr(data, unit);
+                    updateWeatherMenu();
                 })
                 .catch(error => {
                     console.error('Error fetching weather:', error);
@@ -23216,25 +25799,19 @@ function initWeather() {
                     const desc = data.current_condition[0].weatherDesc[0].value.toLowerCase();
                     
                     weatherTemp.textContent = `${temp}° ${defaultUnit}`;
-                    const iconHTML = getWeatherIconFromDescription(conditionCode, desc);
-                    weatherIcon.innerHTML = iconHTML;
-                    
-                    let standardConditionCode = 800;
-                    if (desc.includes('sunny') || desc.includes('clear') || conditionCode === 113) {
-                        standardConditionCode = 800;
-                    } else if (desc.includes('cloud') || (conditionCode >= 116 && conditionCode <= 122)) {
-                        standardConditionCode = 803;
-                    } else if (desc.includes('rain') || desc.includes('drizzle') || (conditionCode >= 266 && conditionCode <= 321)) {
-                        standardConditionCode = 500;
-                    } else if (desc.includes('thunder') || desc.includes('storm') || (conditionCode >= 350 && conditionCode <= 395)) {
-                        standardConditionCode = 200;
-                    } else if (desc.includes('snow') || (conditionCode >= 335 && conditionCode <= 339) || conditionCode >= 399) {
-                        standardConditionCode = 600;
-                    } else if (desc.includes('fog') || desc.includes('mist') || (conditionCode >= 143 && conditionCode <= 263)) {
-                        standardConditionCode = 701;
+                    const overrideCode = getWeatherIconOverride();
+                    if (overrideCode !== null) {
+                        weatherIcon.innerHTML = getWeatherIcon(overrideCode);
+                    } else {
+                        const iconHTML = getWeatherIconFromDescription(conditionCode, desc);
+                        weatherIcon.innerHTML = iconHTML;
                     }
+                    const standardConditionCode = getStandardConditionCode(desc, conditionCode);
+                    setWeatherConditionText(desc || getWeatherConditionLabelFromCode(standardConditionCode));
                     
                     saveWeatherData(temp, standardConditionCode, defaultUnit);
+                    updateWeatherForecastFromWttr(data, defaultUnit);
+                    updateWeatherMenu();
                 })
                 .catch(error => {
                     console.error('Error fetching weather (fallback):', error);
@@ -23245,6 +25822,44 @@ function initWeather() {
                 });
         });
     }
+
+    if (weatherControlItem && weatherMenu && !weatherControlItem.hasAttribute('data-weather-menu')) {
+        weatherControlItem.setAttribute('data-weather-menu', 'true');
+
+        function positionWeatherMenu() {
+            const iconRect = weatherControlItem.getBoundingClientRect();
+            const menuWidth = 340;
+            positionDockMenuForControl(weatherMenu, iconRect, { menuWidth, menuHeight: 200 });
+        }
+
+        weatherControlItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            const wasOpen = weatherMenu.classList.contains('show');
+            closeAllMenus();
+            if (!wasOpen) {
+                updateWeatherMenu();
+                weatherMenu.classList.add('show');
+                setTimeout(positionWeatherMenu, 0);
+            }
+        });
+
+        document.addEventListener('click', function(e) {
+            if (weatherMenu.classList.contains('show')) {
+                const clickedWeather = weatherControlItem.contains(e.target);
+                const clickedMenu = weatherMenu.contains(e.target);
+                if (!clickedWeather && !clickedMenu) {
+                    weatherMenu.classList.remove('show');
+                }
+            }
+        });
+
+        window.addEventListener('resize', function() {
+            if (weatherMenu.classList.contains('show')) {
+                positionWeatherMenu();
+            }
+        });
+    }
     
     // Ensure cached weather is loaded immediately
     if (!hasCachedWeather) {
@@ -23252,11 +25867,24 @@ function initWeather() {
         const savedUnit = localStorage.getItem('weatherUnit') || 'F';
         weatherTemp.textContent = `-10° ${savedUnit}`;
     }
+    updateWeatherMenu();
     
     function getWeatherIconFromDescription(code, description) {
         // Map based on description keywords and codes
         if (description.includes('sunny') || description.includes('clear')) {
             return getWeatherIcon(800); // Clear sky
+        } else if (description.includes('few clouds')) {
+            return getWeatherIcon(801); // Few clouds
+        } else if (description.includes('scattered clouds')) {
+            return getWeatherIcon(802); // Scattered clouds
+        } else if (description.includes('broken clouds')) {
+            return getWeatherIcon(803); // Broken clouds
+        } else if (description.includes('overcast')) {
+            return getWeatherIcon(804); // Overcast
+        } else if (description.includes('partly') && description.includes('cloud')) {
+            return getWeatherIcon(801); // Partly cloudy
+        } else if (description.includes('mostly') && description.includes('cloud')) {
+            return getWeatherIcon(802); // Mostly cloudy
         } else if (description.includes('cloud')) {
             return getWeatherIcon(803); // Clouds
         } else if (description.includes('rain') || description.includes('drizzle')) {
@@ -23270,8 +25898,10 @@ function initWeather() {
         } else {
             // Use code-based mapping for wttr.in (WMO codes)
             if (code === 113) return getWeatherIcon(800); // Clear
-            if (code >= 116 && code <= 119) return getWeatherIcon(801); // Partly cloudy
-            if (code >= 120 && code <= 122) return getWeatherIcon(802); // Cloudy
+            if (code === 116) return getWeatherIcon(801); // Partly cloudy
+            if (code >= 117 && code <= 119) return getWeatherIcon(802); // Scattered clouds
+            if (code >= 120 && code <= 121) return getWeatherIcon(803); // Broken clouds
+            if (code === 122) return getWeatherIcon(804); // Overcast
             if (code >= 143 && code <= 248) return getWeatherIcon(701); // Fog/Mist
             if (code >= 260 && code <= 263) return getWeatherIcon(701); // Freezing fog
             if (code >= 266 && code <= 274) return getWeatherIcon(500); // Rain
@@ -24350,6 +26980,18 @@ function getScreenshotFileName() {
     return `screenshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.png`;
 }
 
+function getScreenRecordingFileName() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const mm = pad(now.getMonth() + 1);
+    const dd = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const min = pad(now.getMinutes());
+    const ss = pad(now.getSeconds());
+    return `screen-recording-${yyyy}${mm}${dd}-${hh}${min}${ss}.webm`;
+}
+
 function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -24603,6 +27245,29 @@ async function ensurePilkOsScreenshotsFolder(fs) {
     return screenshotsPath;
 }
 
+async function ensurePilkOsRecordingsFolder(fs) {
+    const username = getLoggedInUsername();
+    const videosPath = username ? `/Users/${username}/Videos` : '/Temp Files';
+    const recordingsPath = `${videosPath}/Recordings`;
+    const existingRecordings = await fs.getFolder(recordingsPath);
+    if (!existingRecordings) {
+        const videosFolder = await fs.getFolder(videosPath);
+        if (!videosFolder) {
+            if (username) {
+                const parent = `/Users/${username}`;
+                await fs.createFolder(parent, 'Videos');
+            } else {
+                const tmp = await fs.getFolder('/Temp Files');
+                if (!tmp) {
+                    await fs.createFolder('/', 'Temp Files');
+                }
+            }
+        }
+        await fs.createFolder(videosPath, 'Recordings');
+    }
+    return recordingsPath;
+}
+
 async function takeViewportScreenshotToPictures() {
     if (screenshotInProgress) return;
     screenshotInProgress = true;
@@ -24824,12 +27489,40 @@ document.addEventListener('DOMContentLoaded', async function() {
         return !hasLocalStorageData && !hasCacheStorageData;
     };
 
-    // Current PilkOS version (used by Settings > About footer).
-    // Keep this in sync with any UI that displays the OS version.
-    const appVersion = { major: 0, minor: 1, patch: 3 };
-    
+    const parseSemver = (raw) => {
+        const safe = String(raw || '').trim().replace(/^v/i, '');
+        const parts = safe.split('.').map((p) => Number(p));
+        if (parts.length >= 3 && parts.every((p) => Number.isFinite(p))) {
+            return { major: parts[0], minor: parts[1], patch: parts[2], raw: safe };
+        }
+        return { major: 0, minor: 0, patch: 0, raw: safe || '0.0.0' };
+    };
+
+    let versionString = '';
+    try {
+        if (globalThis.pilkOSApp && typeof globalThis.pilkOSApp.getVersion === 'function') {
+            versionString = await globalThis.pilkOSApp.getVersion();
+        }
+    } catch (e) {
+        versionString = '';
+    }
+    if (!versionString) {
+        try {
+            const cached = localStorage.getItem('appVersion');
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (parsed && parsed.major !== undefined && parsed.minor !== undefined && parsed.patch !== undefined) {
+                    versionString = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+                }
+            }
+        } catch (e) {}
+    }
+
+    const appVersion = parseSemver(versionString || '0.1.3');
+    globalThis.pilkOSVersionString = appVersion.raw;
+
     // Browser tab title (always include lowercase v)
-    document.title = `PilkOS v${appVersion.major}.${appVersion.minor}.${appVersion.patch}`;
+    document.title = `PilkOS v${appVersion.raw}`;
 
     // Hotkey should work regardless of login state.
     initScreenshotHotkey();
@@ -24842,7 +27535,11 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Now that we've decided whether this is a cold boot, persist appVersion (so future loads skip boot).
     try {
-        localStorage.setItem('appVersion', JSON.stringify(appVersion));
+        localStorage.setItem('appVersion', JSON.stringify({
+            major: appVersion.major,
+            minor: appVersion.minor,
+            patch: appVersion.patch
+        }));
     } catch (e) {
         // ignore storage errors
     }
@@ -25091,6 +27788,10 @@ function initQuickSettings() {
     const quickSettingsTilesWrap = quickSettingsMenu.querySelector('.quick-settings-tiles');
     const quickSettingsEditPanel = document.getElementById('quick-settings-edit-panel');
     const quickSettingsEditAvailable = document.getElementById('quick-settings-edit-available');
+    const quickMediaTile = document.getElementById('quick-media-control');
+    const quickMediaControls = quickMediaTile ? Array.from(quickMediaTile.querySelectorAll('[data-media-action]')) : [];
+    const quickRecorderTile = document.getElementById('quick-screen-recorder');
+    const quickRecorderControls = quickRecorderTile ? Array.from(quickRecorderTile.querySelectorAll('[data-recorder-action]')) : [];
     const quickSettingsWifiView = document.getElementById('quick-settings-wifi-view');
     const quickSettingsBluetoothView = document.getElementById('quick-settings-bluetooth-view');
     const quickSettingsWifiBack = document.getElementById('quick-settings-wifi-back');
@@ -25257,6 +27958,195 @@ function initQuickSettings() {
         return tile ? tile.dataset.quickTile || '' : '';
     }
 
+    const QUICK_SETTINGS_DOT_OVERRIDE_PREFIX = 'quickSettingsDotOverride_';
+    const QUICK_SETTINGS_DOT_TILES = new Set(['wifi', 'battery']);
+    const QUICK_SETTINGS_DOT_ORDER = {
+        none: 0,
+        general: 1,
+        low: 2,
+        medium: 3,
+        high: 4
+    };
+    const QUICK_SETTINGS_DOT_COLORS = {
+        general: { color: '#5dade2', glow: 'rgba(93, 173, 226, 0.7)' },
+        low: { color: '#f2d95c', glow: 'rgba(242, 217, 92, 0.7)' },
+        medium: { color: '#f5a25d', glow: 'rgba(245, 162, 93, 0.7)' },
+        high: { color: '#f26b6b', glow: 'rgba(242, 107, 107, 0.75)' }
+    };
+    const WIFI_DOT_OVERRIDE_VALUES = new Set(['auto', 'none', 'general', 'low', 'medium', 'high']);
+    const BATTERY_DOT_OVERRIDE_VALUES = new Set(['auto', 'none', 'low', 'medium', 'high']);
+
+    function getQuickSettingsDotOverride(tileId) {
+        const allowedValues = tileId === 'wifi'
+            ? WIFI_DOT_OVERRIDE_VALUES
+            : (tileId === 'battery' ? BATTERY_DOT_OVERRIDE_VALUES : null);
+        if (!allowedValues) return 'auto';
+        try {
+            const raw = localStorage.getItem(`${QUICK_SETTINGS_DOT_OVERRIDE_PREFIX}${tileId}`) || 'auto';
+            return allowedValues.has(raw) ? raw : 'auto';
+        } catch (e) {
+            return 'auto';
+        }
+    }
+
+    function getBatteryDotSeverity(level) {
+        if (!Number.isFinite(level)) return 'none';
+        if (level <= 5) return 'high';
+        if (level <= 10) return 'medium';
+        if (level <= 20) return 'low';
+        return 'none';
+    }
+
+    function getWifiDotSeverity({ enabled, connected }) {
+        if (!enabled) return 'none';
+        if (connected && navigator.onLine === false) return 'high';
+        return 'none';
+    }
+
+    function getHighestSeverity(severities) {
+        let top = 'none';
+        severities.forEach((severity) => {
+            const rank = QUICK_SETTINGS_DOT_ORDER[severity] ?? 0;
+            if (rank > (QUICK_SETTINGS_DOT_ORDER[top] ?? 0)) {
+                top = severity;
+            }
+        });
+        return top;
+    }
+
+    function ensureQuickSettingsTileDot(tile) {
+        if (!tile) return null;
+        if (!QUICK_SETTINGS_DOT_TILES.has(getTileId(tile))) return null;
+        let dot = tile.querySelector('.quick-settings-tile-dot');
+        if (dot) return dot;
+        dot = document.createElement('div');
+        dot.className = 'quick-settings-tile-dot';
+        dot.setAttribute('aria-hidden', 'true');
+        tile.appendChild(dot);
+        return dot;
+    }
+
+    function setQuickSettingsTileDot(tile, severity) {
+        const dot = ensureQuickSettingsTileDot(tile);
+        if (!dot) return;
+        dot.classList.remove('is-visible', 'dot-general', 'dot-low', 'dot-medium', 'dot-high');
+        if (!severity || severity === 'none') return;
+        dot.classList.add('is-visible', `dot-${severity}`);
+    }
+
+    function setQuickSettingsDockAlert(severity) {
+        if (!quickSettingsIcon) return;
+        if (!severity || severity === 'none') {
+            quickSettingsIcon.classList.remove('has-qs-alert');
+            quickSettingsIcon.style.removeProperty('--qs-alert-color');
+            quickSettingsIcon.style.removeProperty('--qs-alert-glow');
+            return;
+        }
+        const palette = QUICK_SETTINGS_DOT_COLORS[severity] || QUICK_SETTINGS_DOT_COLORS.general;
+        quickSettingsIcon.classList.add('has-qs-alert');
+        quickSettingsIcon.style.setProperty('--qs-alert-color', palette.color);
+        quickSettingsIcon.style.setProperty('--qs-alert-glow', palette.glow);
+    }
+
+    function updateQuickSettingsNotifications() {
+        const tiles = getQuickSettingsTiles();
+        const wifiTile = tiles.find(tile => getTileId(tile) === 'wifi');
+        const batteryTile = tiles.find(tile => getTileId(tile) === 'battery');
+        const batteryLevel = typeof window.currentBatteryLevel === 'number'
+            ? Math.round(window.currentBatteryLevel)
+            : NaN;
+        const wifiEnabled = getBooleanFromStorage('wifiEnabled', true);
+        const networks = Array.isArray(window.currentWiFiNetworks) ? window.currentWiFiNetworks : [];
+        const connectedNetwork = networks.find(network => network.connected);
+
+        const wifiSeverity = (() => {
+            const override = getQuickSettingsDotOverride('wifi');
+            if (override !== 'auto') return override;
+            return getWifiDotSeverity({ enabled: wifiEnabled, connected: !!connectedNetwork });
+        })();
+
+        const batterySeverity = (() => {
+            const override = getQuickSettingsDotOverride('battery');
+            if (override !== 'auto') return override;
+            return getBatteryDotSeverity(batteryLevel);
+        })();
+
+        setQuickSettingsTileDot(wifiTile, wifiSeverity);
+        setQuickSettingsTileDot(batteryTile, batterySeverity);
+
+        let updateSeverity = 'none';
+        try {
+            updateSeverity = localStorage.getItem('updatesReadyToInstall') === 'true' ? 'general' : 'none';
+        } catch (e) {}
+
+        const highestSeverity = getHighestSeverity([updateSeverity, wifiSeverity, batterySeverity]);
+        setQuickSettingsDockAlert(highestSeverity);
+    }
+
+    function getActiveMediaWindow() {
+        const focused = document.querySelector('.window.window-focused[data-player-window="true"]');
+        if (focused) return focused;
+        const all = Array.from(document.querySelectorAll('[data-player-window="true"]'));
+        if (!all.length) return null;
+        return all.find(win => win.style.display !== 'none') || all[0];
+    }
+
+    function getActiveRecorderWindow() {
+        const focused = document.querySelector('.window.window-focused[data-screen-recorder-window="true"]');
+        if (focused) return focused;
+        const all = Array.from(document.querySelectorAll('[data-screen-recorder-window="true"]'));
+        if (!all.length) return null;
+        return all.find(win => win.style.display !== 'none') || all[0];
+    }
+
+    function updateQuickMediaControls() {
+        if (!quickMediaTile || !quickMediaControls.length) return;
+        const win = getActiveMediaWindow();
+        const enabled = !!win;
+        quickMediaControls.forEach(btn => {
+            btn.disabled = !enabled;
+        });
+
+        const loopBtn = quickMediaTile.querySelector('[data-media-action="loop"]');
+        const toggleBtn = quickMediaTile.querySelector('[data-media-action="toggle"]');
+        const playIcon = toggleBtn ? toggleBtn.querySelector('.media-icon-play') : null;
+        const pauseIcon = toggleBtn ? toggleBtn.querySelector('.media-icon-pause') : null;
+
+        if (!enabled) {
+            loopBtn?.classList.remove('active');
+            if (playIcon) playIcon.style.display = 'block';
+            if (pauseIcon) pauseIcon.style.display = 'none';
+            return;
+        }
+
+        const playerLoop = win.querySelector('[data-action="loop"]');
+        loopBtn?.classList.toggle('active', !!playerLoop?.classList.contains('active'));
+
+        const mediaEl = win.querySelector('.player-video') || win.querySelector('.player-audio');
+        const isPlaying = !!mediaEl && !mediaEl.paused && !mediaEl.ended;
+        if (playIcon) playIcon.style.display = isPlaying ? 'none' : 'block';
+        if (pauseIcon) pauseIcon.style.display = isPlaying ? 'block' : 'none';
+    }
+
+    function updateQuickRecorderControls() {
+        if (!quickRecorderTile || !quickRecorderControls.length) return;
+        const win = getActiveRecorderWindow();
+        const enabled = !!win;
+        quickRecorderControls.forEach(btn => {
+            btn.disabled = !enabled;
+        });
+        if (!enabled) return;
+        const state = win._screenRecorderState || {};
+        const startBtn = quickRecorderTile.querySelector('[data-recorder-action="start"]');
+        const pauseBtn = quickRecorderTile.querySelector('[data-recorder-action="pause"]');
+        const stopBtn = quickRecorderTile.querySelector('[data-recorder-action="stop"]');
+        const isRecording = state.status === 'recording';
+        const isPaused = state.status === 'paused';
+        if (startBtn) startBtn.disabled = isRecording;
+        if (pauseBtn) pauseBtn.disabled = !isRecording && !isPaused;
+        if (stopBtn) stopBtn.disabled = !isRecording && !isPaused;
+    }
+
     function isTileRemovable(tile) {
         if (!tile) return false;
         if (!tile.classList.contains('quick-settings-tile-static')) return true;
@@ -25266,11 +28156,10 @@ function initQuickSettings() {
     function ensureTileRemoveButton(tile) {
         if (!isTileRemovable(tile)) return;
         if (tile.querySelector('.quick-settings-tile-remove')) return;
-        const label = tile.querySelector('.quick-settings-tile-label');
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'quick-settings-tile-remove';
-        removeBtn.setAttribute('aria-label', `Remove ${label ? label.textContent : 'tile'}`);
+        removeBtn.setAttribute('aria-label', 'Hide Tile');
         removeBtn.innerHTML = `
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -25282,6 +28171,9 @@ function initQuickSettings() {
             hideQuickSettingsTile(tile);
         });
         tile.appendChild(removeBtn);
+        if (typeof setupNavButtonTooltip === 'function') {
+            setupNavButtonTooltip(removeBtn, 'Hide Tile');
+        }
     }
 
     function saveQuickSettingsTileLayout() {
@@ -25348,6 +28240,7 @@ function initQuickSettings() {
         });
 
         tiles.forEach((tile) => ensureTileRemoveButton(tile));
+        tiles.forEach((tile) => ensureQuickSettingsTileDot(tile));
         refreshQuickSettingsAvailableTiles();
     }
 
@@ -25470,6 +28363,93 @@ function initQuickSettings() {
     setupQuickSettingsTileDragAndDrop();
     applyResolutionOption(getResolutionOptionById(getStoredResolutionId()));
     updateQuickResolutionSelection();
+    updateQuickMediaControls();
+    updateQuickRecorderControls();
+
+    if (typeof setupNavButtonTooltip === 'function') {
+        const quickSettingsUpdateBtn = document.getElementById('quick-settings-update-btn');
+        if (quickSettingsEditToggle) setupNavButtonTooltip(quickSettingsEditToggle, 'Customize');
+        if (quickSettingsUpdateBtn) {
+            setupNavButtonTooltip(quickSettingsUpdateBtn, () => 'Update Available');
+            quickSettingsUpdateBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                (async () => {
+                    const nextVersion = localStorage.getItem('updatesReadyVersion');
+                    const versionText = nextVersion ? ` ${nextVersion}` : '';
+                    const confirmed = await showConfirmationDialog(
+                        `A PilkOS${versionText} update is ready to be installed.\n\nThis will restart your system. Are you sure you want to continue with this update?`,
+                        'Install Update'
+                    );
+                    if (!confirmed) return;
+                    if (updatesApi && typeof updatesApi.install === 'function') {
+                        try {
+                            await updatesApi.install();
+                            return;
+                        } catch (error) {
+                            showNotification('Install failed', 'error', 4500);
+                        }
+                    }
+                    // Fallback: restart the app shell if updater isn't available.
+                    try {
+                        window.location.reload();
+                    } catch (e) {
+                        showNotification('Restart failed', 'error', 4500);
+                    }
+                })();
+            });
+        }
+        if (quickSettingsOpenSettings) setupNavButtonTooltip(quickSettingsOpenSettings, 'All Settings');
+        const chevrons = quickSettingsMenu.querySelectorAll('.quick-settings-tile-chevron, .quick-settings-devices-toggle');
+        chevrons.forEach(btn => setupNavButtonTooltip(btn, 'More Settings'));
+        if (quickVolumeMute) setupNavButtonTooltip(quickVolumeMute, 'Mute');
+        if (quickNightLightButton) setupNavButtonTooltip(quickNightLightButton, 'Night Light');
+        if (quickAutoBrightnessButton) setupNavButtonTooltip(quickAutoBrightnessButton, 'Auto Brightness');
+        quickMediaControls.forEach((btn) => {
+            const label = btn.getAttribute('aria-label') || 'Media Control';
+            setupNavButtonTooltip(btn, label);
+        });
+        quickRecorderControls.forEach((btn) => {
+            const label = btn.getAttribute('aria-label') || btn.textContent || 'Capture';
+            setupNavButtonTooltip(btn, label);
+        });
+    }
+
+    if (quickMediaControls.length) {
+        const mediaActionMap = {
+            prev: 'prev',
+            toggle: 'toggle',
+            next: 'next',
+            loop: 'loop'
+        };
+        quickMediaControls.forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.mediaAction;
+                const mapped = mediaActionMap[action];
+                const win = getActiveMediaWindow();
+                if (!mapped || !win) return;
+                const playerBtn = win.querySelector(`[data-action="${mapped}"]`);
+                playerBtn?.click();
+                updateQuickMediaControls();
+            });
+        });
+    }
+
+    if (quickRecorderControls.length) {
+        quickRecorderControls.forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.recorderAction;
+                const win = getActiveRecorderWindow();
+                if (!action || !win || !win._screenRecorderControls) return;
+                const handler = win._screenRecorderControls[action];
+                if (typeof handler === 'function') {
+                    handler();
+                }
+                updateQuickRecorderControls();
+            });
+        });
+    }
 
     if (quickSettingsEditToggle) {
         quickSettingsEditToggle.addEventListener('click', (e) => {
@@ -25649,12 +28629,28 @@ function initQuickSettings() {
 
             if (muted || volume === 0) {
                 const muteLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                muteLine.setAttribute('x1', '3');
-                muteLine.setAttribute('y1', '6');
-                muteLine.setAttribute('x2', '18');
-                muteLine.setAttribute('y2', '18');
+                const wave1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                wave1.setAttribute('d', 'M15.54 8.46a5 5 0 0 1 0 7.07');
+                wave1.setAttribute('fill', 'none');
+                wave1.setAttribute('stroke', 'currentColor');
+                wave1.setAttribute('stroke-width', '2');
+                wave1.setAttribute('stroke-linecap', 'round');
+                quickVolumeMuteIcon.appendChild(wave1);
+
+                const wave2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                wave2.setAttribute('d', 'M19.07 4.93a10 10 0 0 1 0 14.14');
+                wave2.setAttribute('fill', 'none');
+                wave2.setAttribute('stroke', 'currentColor');
+                wave2.setAttribute('stroke-width', '2');
+                wave2.setAttribute('stroke-linecap', 'round');
+                quickVolumeMuteIcon.appendChild(wave2);
+
+                muteLine.setAttribute('x1', '2');
+                muteLine.setAttribute('y1', '2');
+                muteLine.setAttribute('x2', '22');
+                muteLine.setAttribute('y2', '22');
                 muteLine.setAttribute('stroke', 'currentColor');
-                muteLine.setAttribute('stroke-width', '2');
+                muteLine.setAttribute('stroke-width', '2.5');
                 muteLine.setAttribute('stroke-linecap', 'round');
                 quickVolumeMuteIcon.appendChild(muteLine);
             } else {
@@ -25790,7 +28786,7 @@ function initQuickSettings() {
             <path d="M6.5 14.5a9 9 0 0 1 11 0" opacity="${midOpacity}"></path>
             <path d="M9 17a6 6 0 0 1 6 0" opacity="${innerOpacity}"></path>
             <path d="M12 20h.01" opacity="${dotOpacity}"></path>
-            ${showSlash ? '<line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>' : ''}
+            ${showSlash ? '<line class="quick-settings-wifi-slash" x1="4" y1="4" x2="20" y2="20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>' : ''}
         `;
     }
 
@@ -25801,7 +28797,7 @@ function initQuickSettings() {
         const showSlash = !enabled;
         iconSvg.innerHTML = `
             <path d="M6.5 6.5L17.5 17.5L12 23V1L17.5 6.5L6.5 17.5"></path>
-            ${showSlash ? '<line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>' : ''}
+            ${showSlash ? '<line x1="2" y1="2" x2="22" y2="22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>' : ''}
         `;
     }
 
@@ -25819,7 +28815,7 @@ function initQuickSettings() {
         const connected = networks.find(network => network.connected);
         if (quickWifiStatus) {
             if (!wifiEnabled) {
-                quickWifiStatus.textContent = 'Off';
+                quickWifiStatus.textContent = 'OFF';
             } else if (connected) {
                 quickWifiStatus.textContent = connected.name || 'Connected';
             } else if (networks.length > 0) {
@@ -25921,7 +28917,7 @@ function initQuickSettings() {
         const connectedDevices = devices.filter(device => device.connected);
         if (quickBluetoothStatus) {
             if (!bluetoothEnabled) {
-                quickBluetoothStatus.textContent = 'Off';
+                quickBluetoothStatus.textContent = 'OFF';
             } else if (connectedDevices.length > 0) {
                 quickBluetoothStatus.textContent = `${connectedDevices.length} Devices Connected`;
             } else if (devices.length) {
@@ -26033,7 +29029,7 @@ function initQuickSettings() {
         const enabled = getBooleanFromStorage('airplaneModeEnabled', false);
         quickAirplaneToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
         if (quickAirplaneStatus) {
-            quickAirplaneStatus.textContent = enabled ? 'On' : 'Off';
+            quickAirplaneStatus.textContent = enabled ? 'On' : 'OFF';
         }
     }
 
@@ -26045,7 +29041,11 @@ function initQuickSettings() {
         const isResolution = mode === 'resolution';
         const isMain = !isAudio && !isWifi && !isBluetooth && !isBattery && !isResolution;
         if (!quickSettingsMenu) return;
+        const activeMode = isMain ? 'main' : mode;
         quickSettingsMenu.classList.toggle('devices-mode', !isMain);
+        ['main', 'audio', 'wifi', 'bluetooth', 'battery', 'resolution'].forEach((key) => {
+            quickSettingsMenu.classList.toggle(`mode-${key}`, key === activeMode);
+        });
         if (quickAudioDevicesToggle) quickAudioDevicesToggle.setAttribute('aria-expanded', isAudio ? 'true' : 'false');
         if (quickWifiDevicesToggle) quickWifiDevicesToggle.setAttribute('aria-expanded', isWifi ? 'true' : 'false');
         if (quickBluetoothDevicesToggle) quickBluetoothDevicesToggle.setAttribute('aria-expanded', isBluetooth ? 'true' : 'false');
@@ -26080,6 +29080,9 @@ function initQuickSettings() {
         updateQuickBattery();
         updateQuickAirplane();
         updateQuickResolutionStatus();
+        updateQuickMediaControls();
+        updateQuickRecorderControls();
+        updateQuickSettingsNotifications();
     }
 
     function refreshQuickSettingsData() {
@@ -26111,6 +29114,8 @@ function initQuickSettings() {
     }
 
     window.updateQuickSettingsPanel = updateQuickSettingsPanel;
+    window.updateQuickSettingsNotifications = updateQuickSettingsNotifications;
+    updateQuickSettingsNotifications();
 
     if (quickVolumeSlider) {
         if (quickVolumeTooltip) {
@@ -26575,7 +29580,16 @@ function initQuickSettings() {
         }
     }
 
+    function closeQuickSettingsMenu() {
+        if (!quickSettingsMenu.classList.contains('show')) return;
+        quickSettingsMenu.classList.remove('show');
+        quickSettingsMenu.style.display = 'none';
+        stopQuickSettingsLiveUpdates();
+        setQuickSettingsMode('main');
+    }
+
     window.toggleQuickSettingsMenu = handleQuickSettingsToggle;
+    window.closeQuickSettingsMenu = closeQuickSettingsMenu;
 
     quickControlItem.addEventListener('click', handleQuickSettingsToggle, { capture: true });
     quickSettingsIcon.addEventListener('click', handleQuickSettingsToggle, { capture: true });
@@ -26727,11 +29741,18 @@ function ensureWindowDesktopId(win) {
 function updateAppBarVisibilityForDesktop(activeId) {
     if (!activeId) return;
     windowAppBarIcons.forEach((icon) => {
-        const win = icon._window;
-        if (!win) return;
-        const desktopId = win.dataset ? win.dataset.desktopId : null;
-        const resolvedId = desktopId || activeId;
-        if (resolvedId !== activeId) {
+        const windows = icon._windows ? Array.from(icon._windows) : (icon._window ? [icon._window] : []);
+        if (!windows.length) return;
+        let anyOnDesktop = false;
+        windows.forEach(win => {
+            if (!win) return;
+            const desktopId = win.dataset ? win.dataset.desktopId : null;
+            const resolvedId = desktopId || activeId;
+            if (resolvedId === activeId) {
+                anyOnDesktop = true;
+            }
+        });
+        if (!anyOnDesktop) {
             icon.classList.add('dock-item-desktop-hidden');
         } else {
             icon.classList.remove('dock-item-desktop-hidden');

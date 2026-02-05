@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PilkOS v0.1.3</title>
+    <title>PilkOS</title>
     <link rel="icon" type="image/svg+xml" href="../assets/icons/pilkos-logo.svg">
     <link rel="icon" href="../assets/icons/pilkos-logo.svg">
     <link rel="stylesheet" href="styles.css">
@@ -302,13 +302,20 @@
                 <div class="quick-settings-header-row">
                     <div class="quick-settings-header">Quick Settings</div>
                     <div class="quick-settings-header-actions">
-                        <button class="quick-settings-edit-btn" id="quick-settings-edit-toggle" type="button" aria-label="Edit Quick Settings" aria-pressed="false">
+                        <button class="quick-settings-update-btn" id="quick-settings-update-btn" type="button" aria-label="Updates">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 15V5"></path>
+                                <polyline points="7 10 12 5 17 10"></polyline>
+                                <path d="M20 19H4"></path>
+                            </svg>
+                        </button>
+                        <button class="quick-settings-edit-btn" id="quick-settings-edit-toggle" type="button" aria-label="Customize" aria-pressed="false">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M12 20h9"></path>
                                 <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
                             </svg>
                         </button>
-                        <button class="quick-settings-settings-btn" id="quick-settings-open-settings" type="button" aria-label="Open Settings">
+                        <button class="quick-settings-settings-btn" id="quick-settings-open-settings" type="button" aria-label="All Settings">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <circle cx="12" cy="12" r="3"></circle>
                             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .67.39 1.27 1 1.51H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -327,7 +334,7 @@
                         </div>
                         <div class="quick-settings-tile-label">Wi-Fi</div>
                         <div class="quick-settings-tile-subtext" id="quick-wifi-status">Checking...</div>
-                        <button class="quick-settings-tile-chevron" id="quick-wifi-devices-toggle" type="button" aria-label="Wi-Fi Networks" aria-expanded="false">
+                        <button class="quick-settings-tile-chevron" id="quick-wifi-devices-toggle" type="button" aria-label="More Settings" aria-expanded="false">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="9 18 15 12 9 6"></polyline>
                             </svg>
@@ -341,7 +348,7 @@
                         </div>
                         <div class="quick-settings-tile-label">Bluetooth</div>
                         <div class="quick-settings-tile-subtext" id="quick-bluetooth-status">Checking...</div>
-                        <button class="quick-settings-tile-chevron" id="quick-bluetooth-devices-toggle" type="button" aria-label="Bluetooth Devices" aria-expanded="false">
+                        <button class="quick-settings-tile-chevron" id="quick-bluetooth-devices-toggle" type="button" aria-label="More Settings" aria-expanded="false">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="9 18 15 12 9 6"></polyline>
                             </svg>
@@ -357,7 +364,7 @@
                         </div>
                         <div class="quick-settings-tile-label">Screen Size</div>
                         <div class="quick-settings-tile-subtext" id="quick-resolution-status">Auto</div>
-                        <button class="quick-settings-tile-chevron" id="quick-resolution-options-toggle" type="button" aria-label="Screen Resolutions" aria-expanded="false">
+                        <button class="quick-settings-tile-chevron" id="quick-resolution-options-toggle" type="button" aria-label="More Settings" aria-expanded="false">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="9 18 15 12 9 6"></polyline>
                             </svg>
@@ -370,9 +377,9 @@
                                 <line x1="22" y1="11" x2="22" y2="13"></line>
                             </svg>
                         </div>
-                        <div class="quick-settings-tile-label">Battery <span class="quick-settings-label-sep">•</span> <span id="quick-battery-percent-label">--</span></div>
-                        <div class="quick-settings-tile-subtext"><span id="quick-battery-time">--</span></div>
-                        <button class="quick-settings-tile-chevron" id="quick-battery-plans-toggle" type="button" aria-label="Power Plans" aria-expanded="false">
+                        <div class="quick-settings-tile-label">Battery</div>
+                        <div class="quick-settings-tile-subtext"><span id="quick-battery-percent-label">--</span> <span class="quick-settings-label-sep">•</span> <span id="quick-battery-time">--</span></div>
+                        <button class="quick-settings-tile-chevron" id="quick-battery-plans-toggle" type="button" aria-label="More Settings" aria-expanded="false">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="9 18 15 12 9 6"></polyline>
                             </svg>
@@ -387,6 +394,72 @@
                         <div class="quick-settings-tile-label">Airplane Mode</div>
                         <div class="quick-settings-tile-subtext" id="quick-airplane-status">Off</div>
                     </button>
+                    <div class="quick-settings-tile quick-settings-media-tile" id="quick-media-control" role="group" aria-label="Media Control" data-quick-tile="media" data-quick-default-hidden="true">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Media Control</div>
+                        <div class="quick-settings-media-controls" id="quick-media-controls" aria-label="Media controls">
+                            <button class="quick-settings-media-btn" data-media-action="prev" type="button" aria-label="Reverse">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polygon points="19 20 9 12 19 4 19 20"></polygon>
+                                    <line x1="5" y1="19" x2="5" y2="5"></line>
+                                </svg>
+                            </button>
+                            <button class="quick-settings-media-btn" data-media-action="toggle" type="button" aria-label="Play or pause">
+                                <svg class="media-icon-play" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                                <svg class="media-icon-pause" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;">
+                                    <rect x="6" y="4" width="4" height="16"></rect>
+                                    <rect x="14" y="4" width="4" height="16"></rect>
+                                </svg>
+                            </button>
+                            <button class="quick-settings-media-btn" data-media-action="next" type="button" aria-label="Fast forward">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                                    <line x1="19" y1="5" x2="19" y2="19"></line>
+                                </svg>
+                            </button>
+                            <button class="quick-settings-media-btn" data-media-action="loop" type="button" aria-label="Repeat">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polyline points="17 1 21 5 17 9"></polyline>
+                                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                                    <polyline points="7 23 3 19 7 15"></polyline>
+                                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="quick-settings-tile quick-settings-recorder-tile" id="quick-screen-recorder" role="group" aria-label="Capture" data-quick-tile="recorder" data-quick-default-hidden="true">
+                        <div class="quick-settings-tile-icon" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="9"></circle>
+                                <circle cx="12" cy="12" r="4"></circle>
+                            </svg>
+                        </div>
+                        <div class="quick-settings-tile-label">Capture</div>
+                        <div class="quick-settings-recorder-controls" aria-label="Capture controls">
+                            <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" data-recorder-action="start" type="button" aria-label="Start">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <circle cx="12" cy="12" r="6"></circle>
+                                </svg>
+                            </button>
+                            <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" data-recorder-action="pause" type="button" aria-label="Pause">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="6" y="4" width="4" height="16"></rect>
+                                    <rect x="14" y="4" width="4" height="16"></rect>
+                                </svg>
+                            </button>
+                            <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" data-recorder-action="stop" type="button" aria-label="Stop">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="7" y="7" width="10" height="10"></rect>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 <div class="quick-settings-edit-panel" id="quick-settings-edit-panel" aria-hidden="true">
                     <div class="quick-settings-edit-available" id="quick-settings-edit-available"></div>
@@ -403,7 +476,7 @@
                             <path d="M15 9a3 3 0 0 1 0 6"></path>
                         </svg>
                     </button>
-                    <button class="quick-settings-devices-toggle" id="quick-audio-devices-toggle" type="button" aria-label="Audio Devices" aria-expanded="false">
+                    <button class="quick-settings-devices-toggle" id="quick-audio-devices-toggle" type="button" aria-label="More Settings" aria-expanded="false">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <polyline points="9 18 15 12 9 6"></polyline>
                         </svg>
@@ -518,6 +591,67 @@
                     <button class="quick-settings-plan" data-resolution="1920x1080" data-width="1920" data-height="1080" type="button">1920 x 1080</button>
                 </div>
             </div>
+        </div>
+
+        <div class="weather-menu" id="weather-menu" role="dialog" aria-label="3 Day Forecast">
+            <div class="weather-menu-header">
+                <div class="weather-menu-title">Weather Outlook</div>
+                <div class="weather-menu-location" id="weather-menu-location">Weather</div>
+            </div>
+            <div class="weather-menu-grid">
+                <div class="weather-card">
+                    <div class="weather-card-label" id="weather-menu-label-0">Today</div>
+                    <div class="weather-card-condition">
+                        <div class="weather-card-icon" id="weather-menu-icon-0"></div>
+                        <div class="weather-card-desc" id="weather-menu-desc-0">--</div>
+                    </div>
+                    <div class="weather-card-temp" id="weather-menu-temp-0">--</div>
+                </div>
+                <div class="weather-card">
+                    <div class="weather-card-label" id="weather-menu-label-1">Tomorrow</div>
+                    <div class="weather-card-condition">
+                        <div class="weather-card-icon" id="weather-menu-icon-1"></div>
+                        <div class="weather-card-desc" id="weather-menu-desc-1">--</div>
+                    </div>
+                    <div class="weather-card-temp" id="weather-menu-temp-1">--</div>
+                </div>
+                <div class="weather-card">
+                    <div class="weather-card-label" id="weather-menu-label-2">--</div>
+                    <div class="weather-card-condition">
+                        <div class="weather-card-icon" id="weather-menu-icon-2"></div>
+                        <div class="weather-card-desc" id="weather-menu-desc-2">--</div>
+                    </div>
+                    <div class="weather-card-temp" id="weather-menu-temp-2">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="calendar-menu" id="calendar-menu" role="dialog" aria-label="Calendar">
+            <div class="calendar-header">
+                <div class="calendar-month" id="calendar-month-label">Month 2026</div>
+                <div class="calendar-nav">
+                    <button class="calendar-nav-btn" id="calendar-prev-btn" type="button" aria-label="Previous month">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <button class="calendar-nav-btn" id="calendar-next-btn" type="button" aria-label="Next month">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="calendar-weekdays">
+                <div class="calendar-weekday">Sun</div>
+                <div class="calendar-weekday">Mon</div>
+                <div class="calendar-weekday">Tue</div>
+                <div class="calendar-weekday">Wed</div>
+                <div class="calendar-weekday">Thu</div>
+                <div class="calendar-weekday">Fri</div>
+                <div class="calendar-weekday">Sat</div>
+            </div>
+            <div class="calendar-grid" id="calendar-grid"></div>
         </div>
 
     <script>
