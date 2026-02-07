@@ -40,3 +40,17 @@ contextBridge.exposeInMainWorld('pilkOSUpdates', {
 contextBridge.exposeInMainWorld('pilkOSRuntime', {
   isDev: runtimeIsDev,
 });
+
+contextBridge.exposeInMainWorld('pilkOSCapture', {
+  getSources: async () => ipcRenderer.invoke('capture:get-sources'),
+  captureWindow: async () => ipcRenderer.invoke('capture:window-snapshot'),
+});
+
+contextBridge.exposeInMainWorld('pilkOSPreloadStatus', {
+  loaded: true,
+  versions: {
+    electron: process?.versions?.electron || '',
+    chrome: process?.versions?.chrome || '',
+    node: process?.versions?.node || '',
+  },
+});

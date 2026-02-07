@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const https = require('https');
+const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
 const configNodeModules = path.join(__dirname, '..', 'config', 'node_modules');
 if (!module.paths.includes(configNodeModules)) {
   module.paths.push(configNodeModules);
@@ -10,26 +11,143 @@ const loudness = require('loudness');
 const wifi = require('node-wifi');
 let mainWindow;
 
+const UPDATE_REPO = {
+  owner: 'CruelSenpai',
+  repo: 'PilkOS',
+};
+
+let lastGithubCheck = {
+  isNewer: false,
+  version: null,
+  checkedAt: 0,
+};
+
+const normalizeVersion = (value) => {
+  if (!value) return [];
+  const cleaned = String(value).trim().replace(/^v/i, '');
+  return cleaned
+    .split(/[.+-]/)
+    .map((part) => parseInt(part, 10))
+    .filter((part) => Number.isFinite(part));
+};
+
+const compareVersions = (a, b) => {
+  const left = normalizeVersion(a);
+  const right = normalizeVersion(b);
+  const len = Math.max(left.length, right.length, 3);
+  for (let i = 0; i < len; i += 1) {
+    const l = left[i] || 0;
+    const r = right[i] || 0;
+    if (l > r) return 1;
+    if (l < r) return -1;
+  }
+  return 0;
+};
+
+const fetchLatestReleaseTag = (timeoutMs = 8000) => new Promise((resolve) => {
+  const { owner, repo } = UPDATE_REPO;
+  const options = {
+    hostname: 'api.github.com',
+    path: `/repos/${owner}/${repo}/releases/latest`,
+    method: 'GET',
+    headers: {
+      'User-Agent': 'PilkOS',
+      'Accept': 'application/vnd.github+json',
+    },
+  };
+  let settled = false;
+  const finish = (value) => {
+    if (settled) return;
+    settled = true;
+    resolve(value);
+  };
+  const req = https.request(options, (res) => {
+    let body = '';
+    res.on('data', (chunk) => { body += chunk; });
+    res.on('end', () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+        finish(null);
+        return;
+      }
+      try {
+        const data = JSON.parse(body);
+        const tag = data?.tag_name || data?.name;
+        finish(tag ? String(tag) : null);
+      } catch (error) {
+        finish(null);
+      }
+    });
+  });
+  req.on('error', () => {
+    if (timeoutId) clearTimeout(timeoutId);
+    finish(null);
+  });
+  const timeoutId = setTimeout(() => {
+    try {
+      req.destroy(new Error('timeout'));
+    } catch (error) {
+      // Ignore destroy errors.
+    }
+    finish(null);
+  }, Math.max(1000, Number(timeoutMs) || 8000));
+  req.end();
+});
+
 const isDev =
   !app.isPackaged ||
   process.env.NODE_ENV === 'development' ||
   process.argv.includes('--dev');
 
+app.commandLine.appendSwitch('enable-usermedia-screen-capturing');
+app.commandLine.appendSwitch('allow-http-screen-capture');
+
 ipcMain.on('runtime:is-dev', (event) => {
   event.returnValue = isDev;
 });
 
-if (isDev) {
-  try {
-    // Auto-reload in development without clearing data/cache.
-    require('electron-reload')(__dirname, {
-      electron: require(path.join(__dirname, '..', 'node_modules', 'electron')),
-      awaitWriteFinish: true,
-      ignored: [/\.md$/i, /\.txt$/i],
-    });
-  } catch (error) {
-    // No-op: electron-reload is a dev dependency.
-  }
+const devWatchers = [];
+let devReloadTimer = null;
+
+function requestDevRendererReload() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (devReloadTimer) clearTimeout(devReloadTimer);
+  devReloadTimer = setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      mainWindow.webContents.reloadIgnoringCache();
+    } catch (error) {
+      // Ignore reload failures in dev mode.
+    }
+  }, 180);
+}
+
+function setupDevRendererReload() {
+  if (!isDev) return;
+  if (devWatchers.length > 0) return;
+
+  const shouldIgnore = (filename) => {
+    if (!filename) return true;
+    const name = String(filename);
+    return /\.(md|txt)$/i.test(name);
+  };
+
+  const watchDirs = [
+    __dirname,
+    path.join(__dirname, '..', 'assets'),
+  ];
+
+  watchDirs.forEach((dir) => {
+    try {
+      const watcher = fs.watch(dir, { recursive: true }, (eventType, filename) => {
+        if (shouldIgnore(filename)) return;
+        requestDevRendererReload();
+      });
+      devWatchers.push(watcher);
+    } catch (error) {
+      // Ignore watch failures; dev reload will simply be unavailable for that path.
+    }
+  });
 }
 
 wifi.init({ iface: null });
@@ -44,15 +162,40 @@ function setupAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('checking-for-update', () => {
-    sendUpdateStatus('checking');
+    sendUpdateStatus('checking', { source: 'autoUpdater' });
   });
 
   autoUpdater.on('update-available', (info) => {
-    sendUpdateStatus('available', { version: info?.version || '' });
+    sendUpdateStatus('available', {
+      version: info?.version || '',
+      releaseName: info?.releaseName || '',
+      releaseDate: info?.releaseDate || '',
+    });
   });
 
-  autoUpdater.on('update-not-available', () => {
-    sendUpdateStatus('not-available');
+  autoUpdater.on('update-not-available', (info) => {
+    if (!isDev) {
+      if (lastGithubCheck.isNewer) {
+        return;
+      }
+      sendUpdateStatus('not-available', {
+        version: info?.version || '',
+        releaseName: info?.releaseName || '',
+        releaseDate: info?.releaseDate || '',
+      });
+      return;
+    }
+    fetchLatestReleaseTag()
+      .then((tag) => {
+        if (tag) {
+          sendUpdateStatus('available-dev', { version: tag });
+        } else {
+          sendUpdateStatus('not-available');
+        }
+      })
+      .catch(() => {
+        sendUpdateStatus('not-available');
+      });
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -79,6 +222,11 @@ async function createMainWindow() {
     : (fs.existsSync(path.join(app.getAppPath(), 'preload.js'))
         ? path.join(app.getAppPath(), 'preload.js')
         : path.join(app.getAppPath(), 'src', 'preload.js'));
+  const preloadStatus = {
+    path: preloadPath,
+    exists: fs.existsSync(preloadPath),
+    error: null,
+  };
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
@@ -93,34 +241,86 @@ async function createMainWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
       preload: preloadPath,
     },
   });
 
   const { session } = mainWindow.webContents;
-  session.setPermissionRequestHandler((webContents, permission, callback) => {
+  session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (permission === 'geolocation') {
+      callback(true);
+      return;
+    }
+    if (permission === 'display-capture') {
+      callback(true);
+      return;
+    }
+    if (permission === 'media') {
       callback(true);
       return;
     }
     callback(false);
   });
-  session.setPermissionCheckHandler((webContents, permission) => {
+  session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (permission === 'geolocation') {
+      return true;
+    }
+    if (permission === 'display-capture') {
+      return true;
+    }
+    if (permission === 'media') {
       return true;
     }
     return false;
   });
 
+  session.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      const primarySource = sources[0];
+      if (!primarySource) {
+        callback({ video: null });
+        return;
+      }
+      callback({
+        video: primarySource,
+        audio: undefined,
+      });
+    } catch (error) {
+      callback({ video: null });
+    }
+  });
+
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+  mainWindow.webContents.on('preload-error', (event, preloadPathValue, error) => {
+    preloadStatus.error = {
+      path: preloadPathValue || preloadStatus.path,
+      message: error?.message || String(error),
+    };
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    const payload = JSON.stringify(preloadStatus);
+    mainWindow.webContents.executeJavaScript(`window.__preloadStatus = ${payload};`, true).catch(() => {});
+  });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    setupDevRendererReload();
   });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    devWatchers.forEach((watcher) => {
+      try {
+        watcher.close();
+      } catch (error) {
+        // Ignore watcher close errors.
+      }
+    });
+    devWatchers.length = 0;
   });
 }
 
@@ -178,15 +378,61 @@ ipcMain.handle('app:get-version', () => app.getVersion());
 
 ipcMain.handle('updates:check', async () => {
   try {
-    if (!app.isPackaged && !isDev) {
-      sendUpdateStatus('disabled', { message: 'Updates are available in packaged builds only.' });
-      return { state: 'disabled' };
+    const debugInfo = {
+      isDev: !!isDev,
+      isPackaged: !!app.isPackaged,
+    };
+    sendUpdateStatus('debug', debugInfo);
+    if (isDev) {
+      sendUpdateStatus('checking');
+      const tag = await fetchLatestReleaseTag();
+      if (tag) {
+        const detail = { version: tag, debug: debugInfo };
+        sendUpdateStatus('available-dev', detail);
+        return { state: 'available-dev', detail };
+      } else {
+        const detail = { debug: debugInfo };
+        sendUpdateStatus('not-available', detail);
+        return { state: 'not-available', detail };
+      }
     }
-    await autoUpdater.checkForUpdates();
-    return { state: 'checking' };
+    if (!app.isPackaged && !isDev) {
+      const detail = {
+        message: 'Updates are available in packaged builds only.',
+        debug: debugInfo,
+      };
+      sendUpdateStatus('disabled', detail);
+      return { state: 'disabled', detail };
+    }
+    lastGithubCheck = { isNewer: false, version: null, checkedAt: Date.now() };
+    sendUpdateStatus('checking');
+    const latestTag = await fetchLatestReleaseTag();
+    const currentVersion = app.getVersion();
+    const isNewer = latestTag
+      ? compareVersions(latestTag, currentVersion) > 0
+      : false;
+    lastGithubCheck = {
+      isNewer,
+      version: latestTag || null,
+      checkedAt: Date.now(),
+    };
+    if (isNewer) {
+      const detail = { version: latestTag, source: 'github' };
+      sendUpdateStatus('available', detail);
+      autoUpdater.checkForUpdates().catch(() => {});
+      return { state: 'available', detail };
+    }
+    const detail = {
+      version: latestTag || '',
+      source: 'github',
+      current: currentVersion,
+    };
+    sendUpdateStatus('not-available', detail);
+    return { state: 'not-available', detail };
   } catch (error) {
-    sendUpdateStatus('error', { message: error?.message || 'Update check failed' });
-    return { state: 'error' };
+    const detail = { message: error?.message || 'Update check failed' };
+    sendUpdateStatus('error', detail);
+    return { state: 'error', detail };
   }
 });
 
@@ -204,9 +450,29 @@ ipcMain.handle('updates:install', async () => {
   }
 });
 
+ipcMain.handle('capture:get-sources', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+  return sources.map((source) => ({
+    id: source.id,
+    name: source.name,
+    displayId: source.display_id || null,
+  }));
+});
+
+ipcMain.handle('capture:window-snapshot', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  try {
+    const image = await mainWindow.webContents.capturePage();
+    if (!image) return null;
+    return image.toDataURL();
+  } catch (error) {
+    return null;
+  }
+});
+
 app.whenReady().then(async () => {
   await createMainWindow();
-  if (app.isPackaged || isDev) {
+  if (app.isPackaged) {
     setupAutoUpdater();
   } else {
     sendUpdateStatus('disabled', { message: 'Updates are available in packaged builds only.' });

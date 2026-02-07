@@ -1,38 +1,85 @@
-SOFTWARE UPDATER
-- Redesign panel in Settings app.
-- Software Updates don't seem to be detected.
+EXE FILE
+- App is still being named as PilkOS-Setup. Remove Setup from the app name.
+- SmartScreen is showing a warning when trying to run the installer. Look into getting the app verified by Microsoft to remove this warning.
+
+
+-----------------------------------------------------------
 
 DESKTOP
-- Add Window Snapping feature.
+- Add Window Snapping feature for snapping windows to the left or right half of the screen. [EXPERIMENTAL]
 
 DOCK
-- Group apps on the dock if more than one instance of app is opened.
-    - Include a dot in the top right with number of instances opened only if more than one of the same app is open.
-    - Hover should show the live previews of ALL instances.
-    - Clicking on the live preview opens that window up.
-- Add a Close App option to right-click context menu of apps. [MAYBE]
-- Pinned icons should show Close App option in their right-click context menu ONLY if they have an app window open or minimized. [MAYBE]
-- Add a dot in the top right if there is a weather advisory or warning. Replace the tooltip text to show what the alert is for. [FUTURE]
+- Hovering over a Live Preview should highlight the outside of the corresponding app window on the desktop.
+- The Live Preview for a single app should be the same as the Live Previews for multiple apps, just with only one window shown.
+- Add confirmation dialog when using Close Window option from the right click context menu on grouped app icons.
 
 START MENU
-- 
+- Come up with Redesign ideas. It looks ugly the way it currently is.
 
 QUICK SETTINGS
 - Redesign tile sub-menus.
 - Think of new tile ideas.
     - VPN
-    - Data Saver (Include in the Wi-Fi submenu)
+    - Do Not Disturb
+    - Location
+    - 
 - Below slider panels, add a section for apps that are running in the background.
+- Remove diagonal lines from icons that have enable/disable functionality. Enabled is highlight blue, disabled is gray. [MAYBE]
+- If Capture is currently recording, add controls to the left of the Quick Settings icon. [EXPERIMENTAL]
+- If a media application is currently playing media, add media controls to the left of the Quick Settings icon. [EXPERIMENTAL]
 
-SCREENSHOTS
-- When capturing screen, some elements are not captured properly such as the start menu icon and parts of the dock have a black area around them.
+-----------------------------------------------------------
 
-PERSONALIZATION
-- Add Themes
-    - Change accent color
+SETTINGS
+    SIDEBAR MENU (CORRECT ORDER AND CATEGORIES)
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    - DEVELOPER OPTIONS (DEV ONLY)
 
-EXE FILE
-- App is still being named as PilkOS-Setup. Remove Setup from the app name.
+    APPEARANCE
+    - Add Themes section.
+        - Change accent color
+        - Add Light and Dark themes
+    ABOUT (FOOTER)
+        SOFTWARE UPDATER
+        - Redesign panel in Settings app.
+        - Software Updates don't seem to be detected.
 
-SCREEN RECORDER
-- FIX IT
+FILES
+-
+
+VIEWER
+-
+
+PAINT
+-
+
+CALCULATE
+-
+
+PLAYER
+- Clicking on a video file in the Files app opens the video in the Player app, but the video doesn't play. The app just shows a black screen.
+- Video file is looping even when the loop option is turned off.
+- Dropping a video file into the Player app doesn't do anything, but instead drops it onto the desktop.
+
+
+EDITOR
+-
+
+TASKS
+- Sign In shows as an app.
+- X buttons aren't properly aligned.
+
+TERMINAL
+- Add this as an app
+
+FEEDBACK
+- Add this as an app

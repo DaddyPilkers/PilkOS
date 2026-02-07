@@ -890,7 +890,7 @@ body {
     height: 22px;
 }
 
-/* Virtual Desktops overlay */
+/* Spaces overlay */
 .virtual-desktop-overlay {
     position: fixed;
     inset: 0;
@@ -2994,6 +2994,12 @@ body {
     color: #cde7ff;
 }
 
+.screen-recorder-btn.active {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.85);
+}
+
 .screen-recorder-btn:active {
     transform: translateY(1px);
 }
@@ -3024,6 +3030,11 @@ body {
 
 .quick-settings-media-btn:active {
     transform: translateY(1px);
+}
+
+.quick-settings-recorder-btn.active {
+    background: var(--qs-control-bg);
+    color: var(--qs-control-color);
 }
 
 .quick-settings-media-btn.active {

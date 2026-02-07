@@ -1,4 +1,5 @@
 // Menu Management Utility
+
 function closeAllMenus() {
     const startMenu = document.getElementById('start-menu');
     if (startMenu) startMenu.classList.remove('show');
@@ -89,6 +90,20 @@ function debugLog(...args) {
         // swallow
     }
 }
+
+// Log runtime errors to the debug panel when enabled.
+window.addEventListener('error', (event) => {
+    try {
+        const message = event?.message || 'Unknown error';
+        const location = event?.filename ? ` ${event.filename}:${event.lineno || ''}:${event.colno || ''}` : '';
+        debugLog(`Runtime error: ${message}${location}`);
+    } catch (e) {}
+});
+window.addEventListener('unhandledrejection', (event) => {
+    try {
+        debugLog(`Unhandled rejection: ${event?.reason || 'Unknown reason'}`);
+    } catch (e) {}
+});
 
 // Keep console.debug behavior but also mirror to in-page debug panel
 try {
@@ -347,6 +362,7 @@ let _dockAutoHideHidden = false;
 let _dockAutoHidePointerInside = false;
 let _dockAutoHideHideTimeout = null;
 let _dockAutoHideLastMouseY = Number.NEGATIVE_INFINITY;
+let _dockPinnedContextMenuOpen = false;
 
 function _getDockEl() {
     return document.querySelector('.dock');
@@ -370,6 +386,21 @@ function _isDockEdgeRevealActive() {
     return _dockAutoHideLastMouseY >= window.innerHeight - DOCK_AUTO_HIDE_EDGE_PX;
 }
 
+function _isDockMenuOpen() {
+    const menuSelectors = [
+        '#start-menu',
+        '#quick-settings-menu',
+        '#weather-menu',
+        '#calendar-menu',
+        '.start-menu-context-menu.show'
+    ];
+    if (_dockPinnedContextMenuOpen) return true;
+    return menuSelectors.some((selector) => {
+        const menu = document.querySelector(selector);
+        return menu && menu.classList.contains('show');
+    });
+}
+
 function _setDockHidden(hidden) {
     const dock = _getDockEl();
     if (!dock) return;
@@ -387,6 +418,10 @@ function _showDock() {
 function _scheduleDockHide() {
     if (!_dockAutoHideEnabled) return;
     if (!_isDesktopVisible()) return;
+    if (_isDockMenuOpen()) {
+        _showDock();
+        return;
+    }
     if (_dockAutoHidePointerInside) return;
     if (_isDockEdgeRevealActive()) return;
     if (_dockAutoHideHidden) return;
@@ -395,6 +430,10 @@ function _scheduleDockHide() {
     _dockAutoHideHideTimeout = setTimeout(() => {
         if (!_dockAutoHideEnabled) return;
         if (!_isDesktopVisible()) return;
+        if (_isDockMenuOpen()) {
+            _showDock();
+            return;
+        }
         if (_dockAutoHidePointerInside) return;
         if (_isDockEdgeRevealActive()) return;
         _setDockHidden(true);
@@ -420,6 +459,8 @@ function updateDockAutoHideState() {
     _dockAutoHidePointerInside = dock.matches(':hover');
     _updateDockHideCssVar();
     if (_dockAutoHidePointerInside || _isDockEdgeRevealActive()) {
+        _showDock();
+    } else if (_isDockMenuOpen()) {
         _showDock();
     } else {
         // Slight delay feels nicer than snapping away immediately.
@@ -452,6 +493,10 @@ function initDockAutoHide() {
         _dockAutoHideLastMouseY = typeof e.clientY === 'number' ? e.clientY : Number.NEGATIVE_INFINITY;
         if (!_dockAutoHideEnabled) return;
         if (!_isDesktopVisible()) return;
+        if (_isDockMenuOpen()) {
+            _showDock();
+            return;
+        }
 
         if (_isDockEdgeRevealActive()) {
             _showDock();
@@ -501,7 +546,7 @@ function initTooltips() {
                     return 'th';
             }
         };
-        return `${dayLabel} ${monthLabel} ${day}${getOrdinalSuffix(day)}, ${year}`;
+        return `${dayLabel} • ${monthLabel} ${day}${getOrdinalSuffix(day)}, ${year}`;
     };
 
     const getWeatherTooltipText = () => {
@@ -520,7 +565,7 @@ function initTooltips() {
 
     const dockControlTooltips = [
         { element: document.getElementById('search-icon'), text: 'Start Menu' },
-        { element: document.querySelector('.dock-virtual-desktops'), text: 'Virtual Desktops' },
+        { element: document.querySelector('.dock-virtual-desktops'), text: 'Spaces' },
         { element: document.querySelector('.dock-quick-settings'), text: 'Quick Settings' },
         { element: document.querySelector('.dock-clock'), text: getClockTooltipText }
     ];
@@ -809,10 +854,58 @@ function setupDockControlTooltip(target, textOrGetter) {
         tooltip.style.left = left + 'px';
     };
 
+    const menuMap = [
+        { selector: '.dock-weather', menu: '#weather-menu' },
+        { selector: '.dock-clock', menu: '#calendar-menu' },
+        { selector: '.dock-quick-settings', menu: '#quick-settings-menu' },
+        { selector: '#search-icon', menu: '#start-menu' }
+    ];
+    const matchesTarget = (selector) => {
+        try {
+            return target.matches(selector) || target.closest(selector);
+        } catch (e) {
+            return false;
+        }
+    };
+    const resolveRelatedMenu = () => {
+        for (const entry of menuMap) {
+            if (!matchesTarget(entry.selector)) continue;
+            return document.querySelector(entry.menu);
+        }
+        return null;
+    };
+    const isRelatedDockMenuOpen = () => {
+        const menuEl = resolveRelatedMenu();
+        return !!(menuEl && menuEl.classList.contains('show'));
+    };
+
+    const hideTooltipNow = () => {
+        clearTimeout(showTimeout);
+        clearTimeout(hideTimeout);
+        tooltip.style.opacity = '0';
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.transform = 'translateY(-5px)';
+    };
+
+    const relatedMenu = resolveRelatedMenu();
+    if (relatedMenu && typeof MutationObserver !== 'undefined') {
+        const observer = new MutationObserver(() => {
+            if (relatedMenu.classList.contains('show')) {
+                hideTooltipNow();
+            }
+        });
+        observer.observe(relatedMenu, { attributes: true, attributeFilter: ['class'] });
+    }
+
     target.addEventListener('mouseenter', () => {
         clearTimeout(hideTimeout);
+        if (isRelatedDockMenuOpen()) {
+            hideTooltipNow();
+            return;
+        }
         updateTooltipText();
         showTimeout = setTimeout(() => {
+            if (isRelatedDockMenuOpen()) return;
             updateTooltipPosition();
             tooltip.style.opacity = '1';
             tooltip.style.visibility = 'visible';
@@ -822,6 +915,10 @@ function setupDockControlTooltip(target, textOrGetter) {
 
     target.addEventListener('mousemove', () => {
         if (tooltip.style.visibility === 'visible') {
+            if (isRelatedDockMenuOpen()) {
+                hideTooltipNow();
+                return;
+            }
             updateTooltipPosition();
         }
     });
@@ -924,6 +1021,7 @@ function ensureDockTooltipDelegation() {
             try {
                 // Double-check preconditions
                 if (!item.classList || !item.classList.contains('dock-item-pinned')) return;
+                if (_dockPinnedContextMenuOpen) return;
                 if (itemHasOpenWindows(item)) return;
 
                 // Build tooltip text if not supplied
@@ -1590,6 +1688,23 @@ function initClock() {
         animationDir: 'right'
     };
 
+    const getDefaultClock24Hour = () => {
+        try {
+            const locale = (navigator.languages && navigator.languages[0]) || navigator.language || undefined;
+            if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+                const resolved = new Intl.DateTimeFormat(locale, { hour: 'numeric' }).resolvedOptions();
+                if (typeof resolved.hour12 === 'boolean') {
+                    return !resolved.hour12;
+                }
+            }
+            const upper = String(locale || '').toUpperCase();
+            const twelveHourLocales = ['EN-US', 'EN-CA', 'EN-PH'];
+            return !twelveHourLocales.includes(upper);
+        } catch (e) {
+            return true;
+        }
+    };
+
     function updateClock() {
         const now = new Date();
         let hours = now.getHours();
@@ -1600,9 +1715,9 @@ function initClock() {
         const day = String(now.getDate()).padStart(2, '0');
         const year = now.getFullYear();
         
-        // Check if 24-hour format is enabled (default to true/24-hour if not set)
+        // Check if 24-hour format is enabled (default based on locale)
         const clockFormatSetting = localStorage.getItem('clock24HourFormat');
-        const use24Hour = clockFormatSetting === null ? true : clockFormatSetting === 'true';
+        const use24Hour = clockFormatSetting === null ? getDefaultClock24Hour() : clockFormatSetting === 'true';
         
         if (use24Hour) {
             // 24-hour format: HH:MM
@@ -2692,7 +2807,6 @@ function getWindowAppKey(win) {
             [/^paint-window-/, 'Paint'],
             [/^calculate-window-/, 'Calculate'],
             [/^task-manager-window-/, 'Tasks'],
-            [/^screen-recorder-window-/, 'Capture'],
             [/^properties-/, 'Properties']
         ];
         for (const [regex, name] of patterns) {
@@ -3478,7 +3592,7 @@ function addWindowToAppBar(window, options = {}) {
                     e.preventDefault();
                     e.stopPropagation();
                     const rect = cloned.getBoundingClientRect();
-                    showStartMenuAppContextMenu(appObj, { controlRect: rect });
+                    showStartMenuAppContextMenu(appObj, { controlRect: rect, allowClose: true });
                 });
             }
         }
@@ -3631,7 +3745,7 @@ function removeWindowFromAppBar(appIdOrWindow) {
                         e.preventDefault();
                         e.stopPropagation();
                         const rect = cloned.getBoundingClientRect();
-                        showStartMenuAppContextMenu(appObj, { controlRect: rect });
+                        showStartMenuAppContextMenu(appObj, { controlRect: rect, allowClose: true });
                     });
                 }
                 setupDockItemTooltip(cloned);
@@ -4610,14 +4724,17 @@ function initSettingsWindow() {
         const devPage = runtimeIsDev ? `
                         <div class="settings-page" id="developer-page">
                             <div class="settings-section">
-                                <h3>Developer Options</h3>
+                                <h3>Updates</h3>
                                 <div class="settings-item">
                                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                         <button id="simulate-update-btn" class="settings-action-btn">Simulate Update</button>
                                         <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Test update flow without packaged build</span>
                                     </div>
                                 </div>
-                                <div class="settings-item" style="margin-top: 10px;">
+                            </div>
+                            <div class="settings-section">
+                                <h3>Debugging</h3>
+                                <div class="settings-item">
                                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                         <div style="display: flex; align-items: center; gap: 10px;">
                                             <span class="settings-toggle-label">Show Debug Panel</span>
@@ -4628,7 +4745,10 @@ function initSettingsWindow() {
                                         <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Mirror console.debug output to in-app debug panel</span>
                                     </div>
                                 </div>
-                                <div class="settings-item" style="margin-top: 10px;">
+                            </div>
+                            <div class="settings-section">
+                                <h3>Battery</h3>
+                                <div class="settings-item">
                                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                         <button id="dev-battery-charging-btn" class="settings-action-btn">Test Charging</button>
                                         <button id="dev-battery-discharging-btn" class="settings-action-btn">Test Discharging</button>
@@ -4636,7 +4756,10 @@ function initSettingsWindow() {
                                         <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Force battery status for UI testing</span>
                                     </div>
                                 </div>
-                                <div class="settings-item" style="margin-top: 10px;">
+                            </div>
+                            <div class="settings-section">
+                                <h3>Weather</h3>
+                                <div class="settings-item">
                                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                         <button id="dev-weather-clear-override-btn" class="settings-action-btn">Clear Weather Override</button>
                                         <button id="dev-weather-sun-btn" class="settings-action-btn">Clear</button>
@@ -4651,7 +4774,10 @@ function initSettingsWindow() {
                                         <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Force weather icon for UI testing</span>
                                     </div>
                                 </div>
-                                <div class="settings-item" style="margin-top: 10px;">
+                            </div>
+                            <div class="settings-section">
+                                <h3>Quick Settings Indicators</h3>
+                                <div class="settings-item">
                                     <div style="display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;">
                                         <div style="display: flex; flex-direction: column; gap: 6px;">
                                             <label for="dev-qs-dot-wifi" style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">Quick Settings Wi-Fi dot</label>
@@ -4675,6 +4801,134 @@ function initSettingsWindow() {
                                             </select>
                                         </div>
                                         <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px; align-self: center;">Quick Settings dot overrides (testing only)</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="settings-section">
+                                <h3>UI Elements</h3>
+                                <div class="settings-item">
+                                    <div style="display: flex; flex-direction: column; gap: 16px;">
+                                        <div>
+                                            <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px;">Titlebar & Window Controls</div>
+                                            <div class="window-header" style="position: relative; border-radius: 6px; overflow: hidden;">
+                                                <div class="window-title">
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <circle cx="12" cy="12" r="3"></circle>
+                                                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                                                    </svg>
+                                                    Sample Window
+                                                </div>
+                                                <div class="window-controls">
+                                                    <div class="window-control minimize">
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                                                        </svg>
+                                                    </div>
+                                                    <div class="window-control maximize">
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                                                        </svg>
+                                                    </div>
+                                                    <div class="window-control close">
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                                                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                                                        </svg>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px;">Search Box</div>
+                                            <div style="display: grid; gap: 12px;">
+                                                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(40, 40, 50, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px;">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7;">
+                                                        <circle cx="11" cy="11" r="8"></circle>
+                                                        <path d="m21 21-4.35-4.35"></path>
+                                                    </svg>
+                                                    <input type="text" class="file-explorer-search-input" placeholder="Search" style="flex: 1; border: none; background: transparent; color: rgba(255, 255, 255, 0.7); font-size: 13px; outline: none;" />
+                                                </div>
+                                                <div>
+                                                    <label style="display: block; margin-bottom: 6px;">Dropdown</label>
+                                                    <select class="settings-select" style="width: 100%; padding: 8px;">
+                                                        <option>Option A</option>
+                                                        <option>Option B</option>
+                                                        <option>Option C</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label style="display: block; margin-bottom: 6px;">Slider</label>
+                                                    <div class="settings-slider-container">
+                                                        <input type="range" min="0" max="100" value="60" class="settings-slider" />
+                                                        <div class="settings-slider-value">60%</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px;">Tooltips</div>
+                                            <div style="display: flex; align-items: center; gap: 12px;">
+                                                <button class="nav-button settings-panel-btn" id="dev-ui-tooltip-btn" type="button">Hover Me</button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px;">Buttons</div>
+                                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; --qs-control-size: 26px; --qs-control-radius: 8px; --qs-control-bg: rgba(255, 255, 255, 0.08); --qs-control-color: rgba(255, 255, 255, 0.7); --qs-control-hover-bg: rgba(93, 173, 226, 0.18); --qs-control-hover-color: #9dd2ff;">
+                                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                                    <span style="color: rgba(255, 255, 255, 0.6); font-size: 11px;">Default</span>
+                                                    <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" type="button" aria-label="Default">
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <circle cx="12" cy="12" r="3"></circle>
+                                                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                                    <span style="color: rgba(255, 255, 255, 0.6); font-size: 11px;">Hover</span>
+                                                    <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" type="button" aria-label="Hover" style="background: var(--qs-control-hover-bg); color: var(--qs-control-hover-color);">
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <path d="M12 20h9"></path>
+                                                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                                    <span style="color: rgba(255, 255, 255, 0.6); font-size: 11px;">Active</span>
+                                                    <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" type="button" aria-label="Active" style="transform: translateY(1px);">
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <polyline points="9 18 15 12 9 6"></polyline>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                                    <span style="color: rgba(255, 255, 255, 0.6); font-size: 11px;">Disabled</span>
+                                                    <button class="quick-settings-recorder-btn quick-settings-recorder-btn-icon" type="button" aria-label="Disabled" disabled>
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                                                            <path d="M9 9v3a3 3 0 0 0 5.12 2.12"></path>
+                                                            <path d="M15 9V4a3 3 0 0 0-5.83-1"></path>
+                                                            <path d="M19 10v2a7 7 0 0 1-7 7c-1.52 0-2.94-.48-4.1-1.3"></path>
+                                                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                                                            <line x1="8" y1="23" x2="16" y2="23"></line>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px;">Footers</div>
+                                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: rgba(25, 25, 35, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;">
+                                                <span style="color: rgba(255, 255, 255, 0.8);">PilkOS</span>
+                                                <span style="color: rgba(255, 255, 255, 0.6);">v0.1.3</span>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                                                <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px;">All icons used in the UI</div>
+                                                <div style="color: rgba(255, 255, 255, 0.5); font-size: 12px;">Icons found: <span id="dev-ui-icons-count">0</span></div>
+                                            </div>
+                                            <div id="dev-ui-icons-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(28px, 1fr)); gap: 8px; margin-top: 10px;"></div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -4898,7 +5152,19 @@ ${devSidebarItem}
                     </div>
                     <div class="settings-main">
                         <div class="settings-page" id="system-page">
-                    </div>
+                            <div class="settings-section">
+                                <h3>Debug</h3>
+                                <div class="settings-item">
+                                    <div class="settings-toggle-container">
+                                        <span class="settings-toggle-label">Show Debug Log</span>
+                                        <div class="settings-toggle" id="system-show-debug-panel-toggle">
+                                            <div class="settings-toggle-slider"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="color: rgba(255, 255, 255, 0.55); font-size: 12px;">Use this for troubleshooting.</div>
+                            </div>
+                        </div>
                         <div class="settings-page active" id="users-page">
                         <div class="settings-section">
                             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
@@ -5434,6 +5700,7 @@ ${devSidebarItem}
                                         <span id="update-status" class="settings-update-status">Idle</span>
                                     </div>
                                     <div id="update-dev-hint" style="display: none; margin-top: 8px; color: rgba(255, 255, 255, 0.55); font-size: 12px;">Install is disabled in dev builds.</div>
+                                    <div id="update-debug" style="display: none; margin-top: 6px; color: rgba(255, 255, 255, 0.45); font-size: 11px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; user-select: text;">Debug: waiting for update check.</div>
                                 </div>
                             </div>
                         </div>
@@ -5456,6 +5723,7 @@ ${devPage}
         setupWindowControls(window);
         setupSettingsSidebar(window);
         setupUpdateControls(window);
+        setupDeveloperUiElements(window);
         setupUserManagement(window);
         
         // Restore active sidebar page or default to "users" if window was closed
@@ -5865,35 +6133,48 @@ ${devPage}
         }
     }
 
-    function setupUpdateControls(window) {
-        const checkButton = window.querySelector('#check-updates-btn');
-        const simulateButton = window.querySelector('#simulate-update-btn');
-        const devChargeBtn = window.querySelector('#dev-battery-charging-btn');
-        const devDischargeBtn = window.querySelector('#dev-battery-discharging-btn');
-        const devBatteryResetBtn = window.querySelector('#dev-battery-reset-btn');
-        const statusLabel = window.querySelector('#update-status');
-        const devHint = window.querySelector('#update-dev-hint');
-        const weatherClearOverrideBtn = window.querySelector('#dev-weather-clear-override-btn');
-        const weatherSunBtn = window.querySelector('#dev-weather-sun-btn');
-        const weatherFewCloudsBtn = window.querySelector('#dev-weather-few-clouds-btn');
-        const weatherScatteredCloudsBtn = window.querySelector('#dev-weather-scattered-clouds-btn');
-        const weatherBrokenCloudsBtn = window.querySelector('#dev-weather-broken-clouds-btn');
-        const weatherOvercastBtn = window.querySelector('#dev-weather-overcast-btn');
-        const weatherRainBtn = window.querySelector('#dev-weather-rain-btn');
-        const weatherThunderBtn = window.querySelector('#dev-weather-thunder-btn');
-        const weatherSnowBtn = window.querySelector('#dev-weather-snow-btn');
-        const weatherFogBtn = window.querySelector('#dev-weather-fog-btn');
-        const devQuickWifiDotSelect = window.querySelector('#dev-qs-dot-wifi');
-        const devQuickBatteryDotSelect = window.querySelector('#dev-qs-dot-battery');
+    function setupUpdateControls(settingsWindow) {
+        const checkButton = settingsWindow.querySelector('#check-updates-btn');
+        const simulateButton = settingsWindow.querySelector('#simulate-update-btn');
+        const devChargeBtn = settingsWindow.querySelector('#dev-battery-charging-btn');
+        const devDischargeBtn = settingsWindow.querySelector('#dev-battery-discharging-btn');
+        const devBatteryResetBtn = settingsWindow.querySelector('#dev-battery-reset-btn');
+        const statusLabel = settingsWindow.querySelector('#update-status');
+        const devHint = settingsWindow.querySelector('#update-dev-hint');
+        const updateDebug = settingsWindow.querySelector('#update-debug');
+        const weatherClearOverrideBtn = settingsWindow.querySelector('#dev-weather-clear-override-btn');
+        const weatherSunBtn = settingsWindow.querySelector('#dev-weather-sun-btn');
+        const weatherFewCloudsBtn = settingsWindow.querySelector('#dev-weather-few-clouds-btn');
+        const weatherScatteredCloudsBtn = settingsWindow.querySelector('#dev-weather-scattered-clouds-btn');
+        const weatherBrokenCloudsBtn = settingsWindow.querySelector('#dev-weather-broken-clouds-btn');
+        const weatherOvercastBtn = settingsWindow.querySelector('#dev-weather-overcast-btn');
+        const weatherRainBtn = settingsWindow.querySelector('#dev-weather-rain-btn');
+        const weatherThunderBtn = settingsWindow.querySelector('#dev-weather-thunder-btn');
+        const weatherSnowBtn = settingsWindow.querySelector('#dev-weather-snow-btn');
+        const weatherFogBtn = settingsWindow.querySelector('#dev-weather-fog-btn');
+        const devQuickWifiDotSelect = settingsWindow.querySelector('#dev-qs-dot-wifi');
+        const devQuickBatteryDotSelect = settingsWindow.querySelector('#dev-qs-dot-battery');
         const quickSettingsIcon = document.getElementById('quick-settings-icon');
         const quickSettingsUpdateBtn = document.getElementById('quick-settings-update-btn');
 
         if (!checkButton || !statusLabel) return;
 
+        const runtimeIsDev = !!(globalThis.pilkOSRuntime && globalThis.pilkOSRuntime.isDev);
         if (devHint) {
-            const runtimeIsDev = !!(globalThis.pilkOSRuntime && globalThis.pilkOSRuntime.isDev);
             devHint.style.display = runtimeIsDev ? 'block' : 'none';
         }
+        if (updateDebug) {
+            updateDebug.style.display = 'none';
+        }
+
+        const setDebug = (message) => {
+            let text = message || '';
+            text = text.replace(/^Debug:\s*/i, '');
+            if (!text) return;
+            if (typeof debugLog === 'function') {
+                debugLog(`Updates: ${text}`);
+            }
+        };
 
         const setStatus = (text) => {
             statusLabel.textContent = text;
@@ -5912,7 +6193,8 @@ ${devPage}
             try { localStorage.setItem('updatesReadyToInstall', enabled ? 'true' : 'false'); } catch (e) {}
         };
 
-        const setUpdateBadge = (enabled) => {
+        const setUpdateBadge = (enabled, options = {}) => {
+            const { persist = true } = options || {};
             if (quickSettingsIcon) {
                 quickSettingsIcon.classList.toggle('has-update', enabled);
             }
@@ -5923,9 +6205,13 @@ ${devPage}
                     quickSettingsUpdateBtn._tooltipElement.textContent = enabled ? 'Update Available' : '';
                 }
             }
-            persistUpdateBadge(enabled);
-            if (typeof window.updateQuickSettingsNotifications === 'function') {
-                window.updateQuickSettingsNotifications();
+            if (persist) {
+                persistUpdateBadge(enabled);
+            } else if (!enabled) {
+                persistUpdateBadge(false);
+            }
+            if (typeof globalThis.updateQuickSettingsNotifications === 'function') {
+                globalThis.updateQuickSettingsNotifications();
             }
         };
 
@@ -5954,14 +6240,15 @@ ${devPage}
         const applyDotOverride = (tileId, value, allowedValues) => {
             const nextValue = allowedValues.has(value) ? value : 'auto';
             writeDotOverride(tileId, nextValue);
-            if (typeof window.updateQuickSettingsNotifications === 'function') {
-                window.updateQuickSettingsNotifications();
-            } else if (typeof window.updateQuickSettingsPanel === 'function') {
-                window.updateQuickSettingsPanel();
+            if (typeof globalThis.updateQuickSettingsNotifications === 'function') {
+                globalThis.updateQuickSettingsNotifications();
+            } else if (typeof globalThis.updateQuickSettingsPanel === 'function') {
+                globalThis.updateQuickSettingsPanel();
             }
         };
 
-        const updatesApi = window.pilkOSUpdates;
+        const updatesApi = globalThis.pilkOSUpdates;
+        let updateReadyToInstall = false;
         let autoCheckTimer = null;
         const scheduleAutoCheck = () => {
             if (autoCheckTimer) return;
@@ -6102,15 +6389,14 @@ ${devPage}
             devQuickBatteryDotSelect.addEventListener('input', applyBatteryOverride);
         }
 
-        // Developer: Show/Hide in-app debug panel toggle
-        const devShowDebugToggle = window.querySelector('#dev-show-debug-panel-toggle');
-        if (devShowDebugToggle) {
+        const wireDebugPanelToggle = (toggleEl) => {
+            if (!toggleEl) return;
             try {
                 const saved = localStorage.getItem('dev_showDebugPanel');
                 // Default: visible only if panel already exists, else hidden
                 const exists = !!document.getElementById('pilkos-debug-panel');
                 const enabled = saved === null ? exists : saved === 'true';
-                devShowDebugToggle.classList.toggle('active', !!enabled);
+                toggleEl.classList.toggle('active', !!enabled);
                 if (enabled) {
                     try { ensureDebugPanel(); } catch (e) {}
                 } else {
@@ -6119,7 +6405,7 @@ ${devPage}
                 }
             } catch (e) {}
 
-            devShowDebugToggle.addEventListener('click', function() {
+            toggleEl.addEventListener('click', function() {
                 this.classList.toggle('active');
                 const next = this.classList.contains('active');
                 try { localStorage.setItem('dev_showDebugPanel', next ? 'true' : 'false'); } catch (e) {}
@@ -6130,10 +6416,22 @@ ${devPage}
                     if (p) p.style.display = 'none';
                 }
             });
-        }
+        };
+
+        wireDebugPanelToggle(settingsWindow.querySelector('#dev-show-debug-panel-toggle'));
+        wireDebugPanelToggle(settingsWindow.querySelector('#system-show-debug-panel-toggle'));
 
         const persistedUpdate = localStorage.getItem('updatesReadyToInstall') === 'true';
         if (!updatesApi) {
+            const preloadStatus = globalThis.pilkOSPreloadStatus || null;
+            const preloadDiag = globalThis.__preloadStatus || null;
+            const hasRuntime = !!globalThis.pilkOSRuntime;
+            const hasAppApi = !!globalThis.pilkOSApp;
+            const preloadTag = preloadStatus?.loaded ? 'loaded' : 'missing';
+            const preloadDiagTag = preloadDiag
+                ? ` path=${preloadDiag.path} exists=${!!preloadDiag.exists} err=${preloadDiag.error ? preloadDiag.error.message : 'none'}`
+                : ' preloadDiag=missing';
+            setDebug(`Debug: updatesApi missing (runtimeIsDev=${runtimeIsDev} preload=${preloadTag} runtimeApi=${hasRuntime} appApi=${hasAppApi})${preloadDiagTag}`);
             if (persistedUpdate) {
                 setStatus('Update ready to install.');
                 setInstallVisible(true);
@@ -6165,14 +6463,125 @@ ${devPage}
         }
 
 
+        const handleUpdateStatus = (payload) => {
+            const state = payload?.state;
+            if (!state) return;
+
+            const detailText = payload?.detail ? JSON.stringify(payload.detail) : '';
+            setDebug(`Debug: state=${state}${detailText ? ` detail=${detailText}` : ''}`);
+
+            switch (state) {
+                case 'checking':
+                    updateReadyToInstall = false;
+                    setStatus('Checking for updates...');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'available':
+                    updateReadyToInstall = false;
+                    if (payload?.detail?.source === 'github') {
+                        setStatus('Update available.');
+                    } else {
+                        setStatus('Update found. Downloading...');
+                    }
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'available-dev':
+                    updateReadyToInstall = false;
+                    if (payload?.detail?.version) {
+                        setStatus(`Update available (dev mode): ${payload.detail.version}`);
+                    } else {
+                        setStatus('Update available (dev mode).');
+                    }
+                    setInstallVisible(false);
+                    setUpdateBadge(true, { persist: false });
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'not-available':
+                    updateReadyToInstall = false;
+                    setStatus('Already Up To Date');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'download-progress':
+                    updateReadyToInstall = false;
+                    if (typeof payload?.detail?.percent === 'number') {
+                        setStatus(`Downloading Updates... ${payload.detail.percent}%`);
+                    } else {
+                        setStatus('Downloading Updates...');
+                    }
+                    setInstallVisible(false);
+                    break;
+                case 'downloaded':
+                    updateReadyToInstall = true;
+                    setStatus('Update ready to install.');
+                    setInstallVisible(true);
+                    setUpdateBadge(true);
+                    setCheckLabel('Install Updates');
+                    if (payload?.detail?.version) {
+                        try { localStorage.setItem('updatesReadyVersion', String(payload.detail.version)); } catch (e) {}
+                    }
+                    break;
+                case 'installing':
+                    updateReadyToInstall = false;
+                    setStatus('Installing update...');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'disabled':
+                    updateReadyToInstall = false;
+                    setStatus(payload?.detail?.message || 'Updates available in packaged builds only.');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                case 'error':
+                    updateReadyToInstall = false;
+                    setStatus(payload?.detail?.message || 'Update failed.');
+                    setInstallVisible(false);
+                    setUpdateBadge(false);
+                    setCheckLabel('Check For Updates');
+                    break;
+                default:
+                    break;
+            }
+        };
+
         checkButton.addEventListener('click', async () => {
+            if (updateReadyToInstall && updatesApi && typeof updatesApi.install === 'function') {
+                setStatus('Installing update...');
+                setInstallVisible(false);
+                setUpdateBadge(false);
+                setCheckLabel('Check For Updates');
+                try {
+                    await updatesApi.install();
+                } catch (error) {
+                    setStatus('Update install failed');
+                }
+                return;
+            }
             setStatus('Checking for updates...');
             setInstallVisible(false);
             setUpdateBadge(false);
+            const startTime = Date.now();
+            const timeoutId = setTimeout(() => {
+                setDebug(`Debug: check still running after ${Math.round((Date.now() - startTime) / 1000)}s`);
+            }, 15000);
             try {
-                await updatesApi.check();
+                const result = await updatesApi.check();
+                if (result && result.state) {
+                    handleUpdateStatus(result);
+                }
+                clearTimeout(timeoutId);
             } catch (error) {
+                clearTimeout(timeoutId);
                 setStatus('Update check failed');
+                setDebug('Debug: update check failed in renderer');
             }
         });
         scheduleAutoCheck();
@@ -6186,6 +6595,7 @@ ${devPage}
         }
 
         if (persistedUpdate) {
+            updateReadyToInstall = true;
             setUpdateBadge(true);
             setInstallVisible(true);
             setStatus('Update ready to install.');
@@ -6193,67 +6603,76 @@ ${devPage}
         }
 
         updatesApi.onStatus((payload) => {
-            const state = payload?.state;
-            if (!state) return;
+            handleUpdateStatus(payload);
+        });
+    }
 
-            switch (state) {
-                case 'checking':
-                    setStatus('Checking for updates...');
-                    setInstallVisible(false);
-                    setUpdateBadge(false);
-                    setCheckLabel('Check For Updates');
-                    break;
-                case 'available':
-                    setStatus('Update found. Downloading...');
-                    setInstallVisible(false);
-                    setUpdateBadge(false);
-                    setCheckLabel('Check For Updates');
-                    break;
-                case 'not-available':
-                    setStatus('Already Up To Date');
-                    setInstallVisible(false);
-                    setUpdateBadge(false);
-                    setCheckLabel('Check For Updates');
-                    break;
-                case 'download-progress':
-                    if (typeof payload?.detail?.percent === 'number') {
-                        setStatus(`Downloading... ${payload.detail.percent}%`);
-                    } else {
-                        setStatus('Downloading update...');
-                    }
-                    setInstallVisible(false);
-                    break;
-                case 'downloaded':
-                    setStatus('Update ready to install.');
-                    setInstallVisible(true);
-                    setUpdateBadge(true);
-                    setCheckLabel('Install Updates');
-                    if (payload?.detail?.version) {
-                        try { localStorage.setItem('updatesReadyVersion', String(payload.detail.version)); } catch (e) {}
-                    }
-                    break;
-                case 'installing':
-                    setStatus('Installing update...');
-                    setInstallVisible(false);
-                    setUpdateBadge(false);
-                    setCheckLabel('Check For Updates');
-                    break;
-                case 'disabled':
-                    setStatus(payload?.detail?.message || 'Updates available in packaged builds only.');
-                    setInstallVisible(false);
-                    setUpdateBadge(false);
-                    setCheckLabel('Check For Updates');
-                    break;
-                case 'error':
-                    setStatus(payload?.detail?.message || 'Update failed.');
-                    setInstallVisible(false);
-                    setUpdateBadge(false);
-                    setCheckLabel('Check For Updates');
-                    break;
-                default:
-                    break;
+    function setupDeveloperUiElements(window) {
+        const iconGrid = window.querySelector('#dev-ui-icons-grid');
+        if (!iconGrid) return;
+
+        const tooltipButton = window.querySelector('#dev-ui-tooltip-btn');
+        if (tooltipButton && typeof setupNavButtonTooltip === 'function') {
+            setupNavButtonTooltip(tooltipButton, 'Test Tooltip');
+                    updateReadyToInstall = false;
+        }
+
+        const iconCount = window.querySelector('#dev-ui-icons-count');
+        const svgNodes = Array.from(document.querySelectorAll('svg'));
+        const seen = new Set();
+
+        iconGrid.innerHTML = '';
+        document.querySelectorAll('.dev-ui-icon-tooltip').forEach((tooltip) => tooltip.remove());
+
+        svgNodes.forEach((svg) => {
+                    updateReadyToInstall = false;
+            if (!svg) return;
+            const key = svg.outerHTML.replace(/\s+/g, ' ').trim();
+            if (seen.has(key)) return;
+            seen.add(key);
+
+            const labelSource = svg.closest('[aria-label],[title]');
+                    updateReadyToInstall = false;
+            const label =
+                (labelSource && (labelSource.getAttribute('aria-label') || labelSource.getAttribute('title'))) ||
+                svg.getAttribute('aria-label') ||
+                svg.getAttribute('title') ||
+                'Icon';
+
+            const wrapper = document.createElement('div');
+            wrapper.style.display = 'flex';
+                    updateReadyToInstall = true;
+            wrapper.style.alignItems = 'center';
+            wrapper.style.justifyContent = 'center';
+            wrapper.style.padding = '6px';
+            wrapper.style.border = '1px solid rgba(255, 255, 255, 0.08)';
+            wrapper.style.borderRadius = '6px';
+            wrapper.style.background = 'rgba(20, 20, 30, 0.35)';
+            wrapper.setAttribute('aria-label', label);
+
+            const clone = svg.cloneNode(true);
+                    updateReadyToInstall = false;
+            clone.removeAttribute('id');
+            clone.setAttribute('width', '18');
+            clone.setAttribute('height', '18');
+            clone.style.display = 'block';
+
+            wrapper.appendChild(clone);
+                    updateReadyToInstall = false;
+            iconGrid.appendChild(wrapper);
+
+            if (typeof setupNavButtonTooltip === 'function') {
+                setupNavButtonTooltip(wrapper, label);
+                if (wrapper._tooltipElement) {
+                    wrapper._tooltipElement.classList.add('dev-ui-icon-tooltip');
+                    updateReadyToInstall = false;
+                }
             }
         });
+
+        if (iconCount) {
+            iconCount.textContent = String(seen.size);
+        }
     }
     
     function setupUserManagement(window) {
@@ -7151,9 +7570,26 @@ ${devPage}
         // Setup 24-hour format toggle
         const clock24HourToggle = window.querySelector('#clock-24-hour-toggle');
         if (clock24HourToggle) {
-            // Load saved preference (default to true/24-hour if not set)
+            const getDefaultClock24Hour = () => {
+                try {
+                    const locale = (navigator.languages && navigator.languages[0]) || navigator.language || undefined;
+                    if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+                        const resolved = new Intl.DateTimeFormat(locale, { hour: 'numeric' }).resolvedOptions();
+                        if (typeof resolved.hour12 === 'boolean') {
+                            return !resolved.hour12;
+                        }
+                    }
+                    const upper = String(locale || '').toUpperCase();
+                    const twelveHourLocales = ['EN-US', 'EN-CA', 'EN-PH'];
+                    return !twelveHourLocales.includes(upper);
+                } catch (e) {
+                    return true;
+                }
+            };
+
+            // Load saved preference (default based on locale if not set)
             const clockFormatSetting = localStorage.getItem('clock24HourFormat');
-            const use24Hour = clockFormatSetting === null ? true : clockFormatSetting === 'true';
+            const use24Hour = clockFormatSetting === null ? getDefaultClock24Hour() : clockFormatSetting === 'true';
             
             if (use24Hour) {
                 clock24HourToggle.classList.add('active');
@@ -7163,6 +7599,9 @@ ${devPage}
                 }
             } else {
                 clock24HourToggle.classList.remove('active');
+                if (clockFormatSetting === null) {
+                    localStorage.setItem('clock24HourFormat', 'false');
+                }
             }
             
             clock24HourToggle.addEventListener('click', function() {
@@ -12652,7 +13091,7 @@ function initFileExplorer() {
             if (!file) return;
             
             // Check if this is an app shortcut (.lnk file)
-            const ext = name.split('.').pop().toLowerCase();
+            const ext = (name || path).split('.').pop().toLowerCase().trim();
             // Images: open in Viewer
             if (isImageFile(name)) {
                 const openViewer = initViewer();
@@ -12665,10 +13104,125 @@ function initFileExplorer() {
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'opus', 'flac'];
             const videoExts = ['mp4', 'webm', 'ogv', 'mkv', 'mov'];
             if (audioExts.includes(ext) || videoExts.includes(ext)) {
+                const debugInfo = `ext=${ext || 'unknown'}; binary=${file.isBinary ? 'yes' : 'no'}`;
+                const pendingPayload = { path, item: null, autoplay: true, createdAt: Date.now() };
+                const enqueuePlayerItem = (attempt = 0) => {
+                    const win = document.querySelector('[data-player-window="true"]');
+                    if (win) {
+                        try {
+                            if (item && typeof win._playerAddItems === 'function') {
+                                win._playerAddItems([item], { autoplay: true, playNewest: true, warn: true });
+                            } else if (typeof win._playerAddFsPaths === 'function') {
+                                win._playerAddFsPaths([path], { autoplay: true, playNewest: true });
+                            }
+                        } catch (e) {}
+                        try { focusWindow(win); } catch (e) {}
+                        try { updateWindowAppBarState(win, true, false); } catch (e) {}
+                        setTimeout(() => {
+                            const st = win && win._playerState ? win._playerState : null;
+                            const hasQueue = !!(st && Array.isArray(st.playlist) && st.playlist.length > 0);
+                            if (!hasQueue) {
+                                showNotification(`Player queue is still empty (${debugInfo}).`, 'warning', 4500);
+                            }
+                        }, 160);
+                        return;
+                    }
+                    if (attempt < 8) {
+                        setTimeout(() => enqueuePlayerItem(attempt + 1), 80);
+                    }
+                };
+                const mediaMimeMap = {
+                    mp3: 'audio/mpeg',
+                    wav: 'audio/wav',
+                    ogg: 'audio/ogg',
+                    opus: 'audio/opus',
+                    m4a: 'audio/mp4',
+                    aac: 'audio/aac',
+                    flac: 'audio/flac',
+                    mp4: 'video/mp4',
+                    webm: 'video/webm',
+                    ogv: 'video/ogg',
+                    mkv: 'video/x-matroska',
+                    mov: 'video/quicktime',
+                };
+                const mediaKind = videoExts.includes(ext) ? 'video' : 'audio';
+                const mediaMime = mediaMimeMap[ext] || '';
+                let item = null;
+                try {
+                    const content = await fs.getFileContent(path);
+                    let blob = null;
+                    if (content instanceof Blob) {
+                        blob = content.type ? content : new Blob([await content.arrayBuffer()], { type: mediaMime });
+                    } else if (file.content instanceof ArrayBuffer) {
+                        blob = new Blob([file.content], { type: mediaMime });
+                    } else if (file.content && typeof file.content === 'object' && file.content.byteLength !== undefined) {
+                        const view = ArrayBuffer.isView(file.content) ? file.content : null;
+                        if (view && view.buffer) {
+                            const slice = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+                            blob = new Blob([slice], { type: mediaMime });
+                        } else {
+                            blob = new Blob([file.content], { type: mediaMime });
+                        }
+                    } else if (typeof file.content === 'string' && file.content.startsWith('data:')) {
+                        const res = await fetch(file.content);
+                        const dataBlob = await res.blob();
+                        blob = dataBlob.type ? dataBlob : new Blob([await dataBlob.arrayBuffer()], { type: mediaMime });
+                    }
+                    if (blob) {
+                        const url = URL.createObjectURL(blob);
+                        item = {
+                            id: `fs:${path}`,
+                            sourceType: 'fs',
+                            name: name || String(path).split('/').pop() || path,
+                            kind: mediaKind,
+                            fsPath: path,
+                            url,
+                            _revokeUrl: true,
+                        };
+                        pendingPayload.item = item;
+                    }
+                } catch (e) {
+                    item = null;
+                }
                 const openPlayer = initPlayer();
                 if (openPlayer) {
-                    openPlayer(path);
+                    const win = item ? openPlayer(item, { autoplay: true }) : openPlayer(path, { autoplay: true });
+                    if (win) {
+                        try { focusWindow(win); } catch (e) {}
+                        try { updateWindowAppBarState(win, true, false); } catch (e) {}
+                    }
                 }
+                // Fallback: retry enqueue/focus until Player window is ready.
+                enqueuePlayerItem(0);
+                setTimeout(() => {
+                    const win = document.querySelector('[data-player-window="true"]');
+                    if (win) {
+                        try { focusWindow(win); } catch (e) {}
+                        try { updateWindowAppBarState(win, true, false); } catch (e) {}
+                    }
+                }, 240);
+                setTimeout(() => {
+                    const win = document.querySelector('[data-player-window="true"]');
+                    if (win) {
+                        try { focusWindow(win); } catch (e) {}
+                        try { updateWindowAppBarState(win, true, false); } catch (e) {}
+                    }
+                }, 520);
+                setTimeout(() => {
+                    const win = document.querySelector('[data-player-window="true"]');
+                    if (win) {
+                        try { focusWindow(win); } catch (e) {}
+                        try { updateWindowAppBarState(win, true, false); } catch (e) {}
+                    }
+                }, 900);
+                setTimeout(() => {
+                    const win = document.querySelector('[data-player-window="true"]');
+                    const st = win && win._playerState ? win._playerState : null;
+                    const inQueue = !!(st && Array.isArray(st.playlist) && st.playlist.some((it) => it && it.fsPath === path));
+                    if (!inQueue) {
+                        showNotification(`Player could not enqueue this file (${debugInfo}).`, 'warning', 4000);
+                    }
+                }, 260);
                 return;
             }
             if (ext === 'lnk') {
@@ -15709,7 +16263,7 @@ function initPlayer() {
     `;
 
     function getMediaExt(nameOrPath) {
-        return String(nameOrPath || '').split('.').pop().toLowerCase();
+        return String(nameOrPath || '').split('.').pop().toLowerCase().trim();
     }
 
     function getMediaKindByExt(ext) {
@@ -16027,19 +16581,55 @@ function initPlayer() {
         if (!file) return null;
 
         const name = file.name || String(fsPath).split('/').pop() || fsPath;
-        const ext = getMediaExt(name);
+        let ext = getMediaExt(name);
+        if (!ext && fsPath) {
+            ext = getMediaExt(fsPath);
+        }
         const kind = getMediaKindByExt(ext);
         if (!kind) return null;
 
         let blob = null;
+        const mimeType = getMediaMimeTypeByExt(ext);
         const content = await fs.getFileContent(fsPath);
+
         if (content instanceof Blob) {
-            blob = content.type ? content : new Blob([await content.arrayBuffer()], { type: getMediaMimeTypeByExt(ext) });
+            blob = content.type ? content : new Blob([await content.arrayBuffer()], { type: mimeType });
         } else if (file.content instanceof ArrayBuffer) {
-            blob = new Blob([file.content], { type: getMediaMimeTypeByExt(ext) });
-        } else {
-            return null;
+            blob = new Blob([file.content], { type: mimeType });
+        } else if (file.content && typeof file.content === 'object' && file.content.byteLength !== undefined) {
+            const view = ArrayBuffer.isView(file.content) ? file.content : null;
+            if (view && view.buffer) {
+                const slice = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+                blob = new Blob([slice], { type: mimeType });
+            } else {
+                blob = new Blob([file.content], { type: mimeType });
+            }
+        } else if (typeof file.content === 'string' && file.content.startsWith('data:')) {
+            try {
+                const res = await fetch(file.content);
+                const dataBlob = await res.blob();
+                blob = dataBlob.type ? dataBlob : new Blob([await dataBlob.arrayBuffer()], { type: mimeType });
+            } catch (e) {
+                blob = null;
+            }
+        } else if (typeof file.content === 'string') {
+            // Fallback for legacy/base64 stored media content.
+            const raw = file.content.trim();
+            const looksBase64 = raw.length >= 32 && raw.length % 4 === 0 && /^[A-Za-z0-9+/=\r\n]+$/.test(raw);
+            if (looksBase64) {
+                try {
+                    const clean = raw.replace(/[\r\n]/g, '');
+                    const bin = atob(clean);
+                    const bytes = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+                    blob = new Blob([bytes.buffer], { type: mimeType });
+                } catch (e) {
+                    blob = null;
+                }
+            }
         }
+
+        if (!blob) return null;
 
         const url = URL.createObjectURL(blob);
         return {
@@ -16118,12 +16708,12 @@ function initPlayer() {
         }
     }
 
-    function createPlayerWindow(initialItem = null, restoreState = null) {
+    function createPlayerWindow(initialItem = null, restoreState = null, initialOptions = {}) {
         if (typeof initPlayer._count !== 'number') initPlayer._count = 0;
         const windowId = restoreState && restoreState.windowId ? restoreState.windowId : `player-window-${initPlayer._count++}`;
 
         const win = document.createElement('div');
-        win.className = 'window screen-recorder-window';
+        win.className = 'window player-window';
         win.id = windowId;
         win.setAttribute('data-player-window', 'true');
         win.tabIndex = 0;
@@ -16318,6 +16908,7 @@ function initPlayer() {
                 if (!el) return;
                 try {
                     el.pause();
+                    el.muted = false;
                     el.removeAttribute('src');
                     el.load();
                 } catch {}
@@ -16470,12 +17061,30 @@ function initPlayer() {
             if (!activeMediaEl) return;
             activeMediaEl.src = item.url;
             activeMediaEl.preload = 'metadata';
+            try { activeMediaEl.load(); } catch {}
 
             try {
                 if (options.autoplay === false) {
                     setPlayUi(false);
                 } else {
-                    await activeMediaEl.play();
+                    try {
+                        await activeMediaEl.play();
+                    } catch (playError) {
+                        const name = playError && playError.name ? String(playError.name) : '';
+                        const message = playError && playError.message ? String(playError.message) : String(playError || '');
+                        const blocked = name === 'NotAllowedError' || /notallowed|gesture|autoplay/i.test(message);
+                        if (blocked) {
+                            try {
+                                activeMediaEl.muted = true;
+                                await activeMediaEl.play();
+                                showNotification('Playback started (audio muted by autoplay policy).', 'info', 3000);
+                            } catch {
+                                setPlayUi(false);
+                            }
+                        } else {
+                            setPlayUi(false);
+                        }
+                    }
                 }
             } catch {
                 setPlayUi(false);
@@ -16514,18 +17123,23 @@ function initPlayer() {
             }
         }
 
-        async function addFsPaths(paths, options = {}) {
-            const unique = Array.from(new Set(paths.filter(Boolean)));
-            const added = [];
-            for (const p of unique) {
-                const item = await mediaItemFromFsPath(p);
-                if (item) added.push(item);
-            }
-            if (!added.length) {
-                showNotification('No playable media files found.', 'warning', 3000);
+        function addItems(items, options = {}) {
+            const incoming = Array.isArray(items) ? items : [];
+            const unique = incoming.filter((item) => item && item.url && item.kind).filter((item) => {
+                if (item.sourceType === 'fs' && item.fsPath) {
+                    return !state.playlist.some((it) => it && it.sourceType === 'fs' && it.fsPath === item.fsPath);
+                }
+                return true;
+            });
+
+            if (!unique.length) {
+                if (options.warn !== false) {
+                    showNotification('No playable media files found.', 'warning', 3000);
+                }
                 return;
             }
-            state.playlist.push(...added);
+
+            state.playlist.push(...unique);
             rebuildOrder();
             renderPlaylist();
             if (state.currentIndex < 0) {
@@ -16537,10 +17151,36 @@ function initPlayer() {
                 } else {
                     playIndex(0);
                 }
+            } else if (options.playNewest) {
+                const newestIndex = Math.max(0, state.playlist.length - 1);
+                if (options.autoplay === false) {
+                    state.currentIndex = newestIndex;
+                    rebuildOrder();
+                    renderPlaylist();
+                    savePlayerWindowsState();
+                } else {
+                    playIndex(newestIndex);
+                }
             } else {
                 savePlayerWindowsState();
             }
         }
+
+        async function addFsPaths(paths, options = {}) {
+            const unique = Array.from(new Set(paths.filter(Boolean))).filter((p) => {
+                return !state.playlist.some((it) => it && it.sourceType === 'fs' && it.fsPath === p);
+            });
+            const added = [];
+            for (const p of unique) {
+                const item = await mediaItemFromFsPath(p);
+                if (item) added.push(item);
+            }
+            addItems(added, options);
+        }
+
+        // Expose helper so existing Player windows can accept new items.
+        win._playerAddFsPaths = addFsPaths;
+        win._playerAddItems = addItems;
 
         // Toolbar actions
         win.querySelector('[data-action="add-local"]')?.addEventListener('click', async (e) => {
@@ -16739,11 +17379,26 @@ function initPlayer() {
             }
         } else if (initialItem) {
             if (typeof initialItem === 'string') {
-                addFsPaths([initialItem]);
+                addFsPaths([initialItem], { autoplay: initialOptions.autoplay !== false, playNewest: true });
+            } else if (initialItem && initialItem.url && initialItem.kind) {
+                addItems([initialItem], { autoplay: initialOptions.autoplay !== false, playNewest: true, warn: true });
             } else {
                 // Ignore host files/objects; Player only supports PilkOS filesystem paths.
                 showNotification('Player only supports media from PilkOS Files.', 'warning', 3500);
             }
+        }
+
+        // Consume any pending Player open request (first-open cases from Files).
+        const pending = window._pendingPlayerOpen;
+        if (pending && pending.path && Date.now() - pending.createdAt < 5000) {
+            try {
+                if (pending.item && pending.item.url && pending.item.kind) {
+                    addItems([pending.item], { autoplay: pending.autoplay !== false, playNewest: true, warn: true });
+                } else {
+                    addFsPaths([pending.path], { autoplay: pending.autoplay !== false, playNewest: true });
+                }
+            } catch (e) {}
+            try { delete window._pendingPlayerOpen; } catch (e) { window._pendingPlayerOpen = null; }
         }
 
         if (!isMinimized) {
@@ -16772,9 +17427,64 @@ function initPlayer() {
         }
     }
 
-    return function openPlayer(initial = null) {
-        return createPlayerWindow(initial);
+    const openPlayer = (initial = null, options = {}) => {
+        const existing = Array.from(document.querySelectorAll('[data-player-window="true"]'))
+            .find((el) => el && el._playerAddFsPaths);
+        if (existing) {
+            if (existing.style.display === 'none') {
+                existing.style.display = 'flex';
+            }
+            try { focusWindow(existing); } catch (e) {}
+            try { updateWindowAppBarState(existing, true, false); } catch (e) {}
+            if (typeof initial === 'string') {
+                try {
+                    existing._playerAddFsPaths([initial], { autoplay: options.autoplay !== false, playNewest: true });
+                } catch (e) {}
+            } else if (initial && existing._playerAddItems && initial.url && initial.kind) {
+                try {
+                    existing._playerAddItems([initial], { autoplay: options.autoplay !== false, playNewest: true, warn: true });
+                } catch (e) {}
+            }
+            setTimeout(() => {
+                try { focusWindow(existing); } catch (e) {}
+                try { updateWindowAppBarState(existing, true, false); } catch (e) {}
+            }, 30);
+            return existing;
+        }
+        const win = createPlayerWindow(initial, null, options);
+        if (win) {
+            setTimeout(() => {
+                try { focusWindow(win); } catch (e) {}
+                try { updateWindowAppBarState(win, true, false); } catch (e) {}
+                if (typeof initial === 'string' && win._playerAddFsPaths) {
+                    try {
+                        win._playerAddFsPaths([initial], { autoplay: options.autoplay !== false, playNewest: true });
+                    } catch (e) {}
+                }
+            }, 30);
+        }
+        return win;
     };
+
+    const consumePendingPlayerOpen = () => {
+        const queue = Array.isArray(window._pendingPlayerOpenQueue) ? window._pendingPlayerOpenQueue : [];
+        if (!queue.length) return;
+        const payload = queue.shift();
+        if (!payload) return;
+        const initial = payload.item && payload.item.url ? payload.item : payload.path;
+        const win = openPlayer(initial, { autoplay: payload.autoplay !== false });
+        if (win) {
+            try { focusWindow(win); } catch (e) {}
+            try { updateWindowAppBarState(win, true, false); } catch (e) {}
+        } else {
+            queue.unshift(payload);
+        }
+    };
+
+    window._consumePendingPlayerOpen = consumePendingPlayerOpen;
+    setTimeout(consumePendingPlayerOpen, 0);
+
+    return openPlayer;
 }
 
 function initScreenRecorder() {
@@ -16797,7 +17507,7 @@ function initScreenRecorder() {
         </svg>
     `;
 
-    function createScreenRecorderWindow() {
+    function createScreenRecorderWindow(options = {}) {
         const windowId = `screen-recorder-window-${initScreenRecorder._count++}`;
         const win = document.createElement('div');
         win.className = 'window screen-recorder-window';
@@ -16807,6 +17517,9 @@ function initScreenRecorder() {
         win.style.height = 'auto';
         win.style.minWidth = '0';
         win.style.minHeight = '0';
+        if (options.hidden) {
+            win.style.display = 'none';
+        }
 
         win.innerHTML = `
             <div class="window-titlebar window-header">
@@ -16827,15 +17540,34 @@ function initScreenRecorder() {
             </div>
             <div class="window-content screen-recorder-content">
                 <div class="screen-recorder-controls">
+                    <button class="screen-recorder-btn screen-recorder-btn-icon screen-recorder-mic-btn" data-recorder-action="mic" type="button" aria-label="Microphone" aria-pressed="false">
+                        <svg class="mic-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                            <line x1="8" y1="23" x2="16" y2="23"></line>
+                        </svg>
+                        <svg class="mic-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;">
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                            <path d="M9 9v3a3 3 0 0 0 5.12 2.12"></path>
+                            <path d="M15 9V4a3 3 0 0 0-5.83-1"></path>
+                            <path d="M19 10v2a7 7 0 0 1-7 7c-1.52 0-2.94-.48-4.1-1.3"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                            <line x1="8" y1="23" x2="16" y2="23"></line>
+                        </svg>
+                    </button>
                     <button class="screen-recorder-btn screen-recorder-btn-icon" data-recorder-action="start" type="button" aria-label="Start">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <circle cx="12" cy="12" r="6"></circle>
                         </svg>
                     </button>
                     <button class="screen-recorder-btn screen-recorder-btn-icon" data-recorder-action="pause" type="button" aria-label="Pause">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <svg class="recorder-icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <rect x="6" y="4" width="4" height="16"></rect>
                             <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                        <svg class="recorder-icon-resume" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;">
+                            <polygon points="7 4 20 12 7 20 7 4"></polygon>
                         </svg>
                     </button>
                     <button class="screen-recorder-btn screen-recorder-btn-icon" data-recorder-action="stop" type="button" aria-label="Stop">
@@ -16848,42 +17580,128 @@ function initScreenRecorder() {
         `;
 
         windowsContainer.appendChild(win);
-        makeWindowDraggable(win);
+        if (!options.hidden) {
+            makeWindowDraggable(win);
+        }
 
-        addWindowToAppBar(win, {
-            iconSvg: RECORDER_ICON_24,
-            label: 'Capture',
-            onIconClick: () => toggleWindowFromDock(win)
-        });
+        if (!options.skipDock) {
+            addWindowToAppBar(win, {
+                iconSvg: RECORDER_ICON_24,
+                label: 'Capture',
+                onIconClick: () => toggleWindowFromDock(win)
+            });
+        }
 
         const statusEl = null;
         const preview = null;
         const startBtn = win.querySelector('[data-recorder-action="start"]');
         const pauseBtn = win.querySelector('[data-recorder-action="pause"]');
         const stopBtn = win.querySelector('[data-recorder-action="stop"]');
+        const micBtn = win.querySelector('[data-recorder-action="mic"]');
 
         const state = {
             status: 'idle',
             recorder: null,
             stream: null,
-            chunks: []
+            chunks: [],
+            micStream: null,
+            micEnabled: false
         };
         win._screenRecorderState = state;
 
         const updateUi = () => {
-            if (startBtn) startBtn.disabled = state.status === 'recording';
+            const isRecording = state.status === 'recording';
+            const isPaused = state.status === 'paused';
+            if (startBtn) startBtn.disabled = state.status !== 'idle';
             if (pauseBtn) pauseBtn.disabled = state.status === 'idle';
             if (stopBtn) stopBtn.disabled = state.status === 'idle';
+            if (micBtn) micBtn.disabled = !isMicrophoneAllowed();
+            if (pauseBtn) {
+                const pauseLabel = isPaused ? 'Resume' : 'Pause';
+                pauseBtn.setAttribute('aria-label', pauseLabel);
+                pauseBtn.removeAttribute('title');
+                const pauseIcon = pauseBtn.querySelector('.recorder-icon-pause');
+                const resumeIcon = pauseBtn.querySelector('.recorder-icon-resume');
+                if (pauseIcon) pauseIcon.style.display = isPaused ? 'none' : 'block';
+                if (resumeIcon) resumeIcon.style.display = isPaused ? 'block' : 'none';
+            }
             if (typeof window.updateQuickSettingsPanel === 'function') {
                 window.updateQuickSettingsPanel();
             }
         };
 
-        const stopTracks = () => {
-            if (state.stream) {
-                state.stream.getTracks().forEach(track => track.stop());
+        const isMicrophoneAllowed = () => {
+            try {
+                return localStorage.getItem('privacyMicrophone') !== 'false';
+            } catch (e) {
+                return true;
             }
+        };
+
+        const updateMicUi = () => {
+            if (!micBtn) return;
+            const enabled = !!state.micEnabled;
+            micBtn.classList.toggle('active', enabled);
+            micBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            const micOn = micBtn.querySelector('.mic-on');
+            const micOff = micBtn.querySelector('.mic-off');
+            if (micOn) micOn.style.display = enabled ? 'block' : 'none';
+            if (micOff) micOff.style.display = enabled ? 'none' : 'block';
+        };
+
+        const requestMicStream = async () => {
+            if (!state.micEnabled || !isMicrophoneAllowed()) return null;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                return stream || null;
+            } catch (err) {
+                return null;
+            }
+        };
+
+        const setMicEnabled = async (enabled, { showNotice = true } = {}) => {
+            const allowMic = isMicrophoneAllowed();
+            if (enabled && !allowMic) {
+                if (showNotice) {
+                    showNotification('Microphone access is disabled in Settings.', 'warning', 3500);
+                }
+                enabled = false;
+            }
+            state.micEnabled = !!enabled;
+            updateMicUi();
+            if (state.micStream) {
+                state.micStream.getAudioTracks().forEach(track => {
+                    track.enabled = !!state.micEnabled;
+                });
+            }
+            if (state.micEnabled && state.status === 'recording' && !state.micStream) {
+                const micStream = await requestMicStream();
+                if (micStream && state.stream) {
+                    state.micStream = micStream;
+                    micStream.getAudioTracks().forEach(track => {
+                        track.enabled = true;
+                        try { state.stream.addTrack(track); } catch (e) {}
+                    });
+                } else {
+                    state.micEnabled = false;
+                    updateMicUi();
+                    if (showNotice) {
+                        showNotification('Microphone unavailable. It will remain muted.', 'warning', 3500);
+                    }
+                }
+            }
+            updateUi();
+        };
+
+        const stopTracks = () => {
+            const streams = [state.stream, state.micStream].filter(Boolean);
+            streams.forEach((stream) => {
+                try {
+                    stream.getTracks().forEach(track => track.stop());
+                } catch (e) {}
+            });
             state.stream = null;
+            state.micStream = null;
         };
 
         const finalizeRecording = async () => {
@@ -16911,11 +17729,68 @@ function initScreenRecorder() {
                 updateUi();
                 return;
             }
+            const requestDisplayMedia = async () => {
+                return navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: false
+                });
+            };
+            const requestDesktopFallback = async () => {
+                if (!window.pilkOSCapture || typeof window.pilkOSCapture.getSources !== 'function') {
+                    return null;
+                }
+                const sources = await window.pilkOSCapture.getSources();
+                const list = Array.isArray(sources) ? sources : [];
+                const ordered = [
+                    ...list.filter((item) => String(item?.id || '').startsWith('screen:')),
+                    ...list.filter((item) => String(item?.id || '').startsWith('window:')),
+                ];
+                for (const source of ordered) {
+                    if (!source || !source.id) continue;
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            audio: false,
+                            video: {
+                                mandatory: {
+                                    chromeMediaSource: 'desktop',
+                                    chromeMediaSourceId: source.id
+                                }
+                            }
+                        });
+                        if (stream) return stream;
+                    } catch (captureError) {
+                        // Try the next source.
+                    }
+                }
+                return null;
+            };
             try {
-                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-                state.stream = stream;
+                let stream = null;
+                try {
+                    stream = await requestDesktopFallback();
+                } catch (fallbackError) {
+                    stream = null;
+                }
+                if (!stream) {
+                    stream = await requestDisplayMedia();
+                }
+                let micStream = null;
+                if (state.micEnabled) {
+                    micStream = await requestMicStream();
+                    if (!micStream) {
+                        state.micEnabled = false;
+                        updateMicUi();
+                        showNotification('Microphone unavailable. Recording without mic.', 'warning', 3500);
+                    }
+                }
+                state.micStream = micStream;
+                const combinedTracks = [
+                    ...stream.getVideoTracks(),
+                    ...(micStream ? micStream.getAudioTracks() : [])
+                ];
+                state.stream = micStream ? new MediaStream(combinedTracks) : stream;
                 state.chunks = [];
-                const recorder = new MediaRecorder(stream);
+                const recorder = new MediaRecorder(state.stream);
                 state.recorder = recorder;
                 recorder.ondataavailable = (e) => {
                     if (e.data && e.data.size > 0) state.chunks.push(e.data);
@@ -16931,6 +17806,50 @@ function initScreenRecorder() {
                 state.status = 'recording';
                 updateUi();
             } catch (err) {
+                try {
+                    if (!state.stream) {
+                        let fallbackStream = await requestDisplayMedia();
+                        if (!fallbackStream) {
+                            fallbackStream = await requestDesktopFallback();
+                        }
+                        if (fallbackStream) {
+                            let micStream = null;
+                            if (state.micEnabled) {
+                                micStream = await requestMicStream();
+                                if (!micStream) {
+                                    state.micEnabled = false;
+                                    updateMicUi();
+                                }
+                            }
+                            state.micStream = micStream;
+                            const combinedTracks = [
+                                ...fallbackStream.getVideoTracks(),
+                                ...(micStream ? micStream.getAudioTracks() : [])
+                            ];
+                            state.stream = micStream ? new MediaStream(combinedTracks) : fallbackStream;
+                            state.chunks = [];
+                            const recorder = new MediaRecorder(state.stream);
+                            state.recorder = recorder;
+                            recorder.ondataavailable = (e) => {
+                                if (e.data && e.data.size > 0) state.chunks.push(e.data);
+                            };
+                            recorder.onstop = () => {
+                                finalizeRecording();
+                                stopTracks();
+                                state.recorder = null;
+                                state.status = 'idle';
+                                updateUi();
+                            };
+                            recorder.start();
+                            state.status = 'recording';
+                            updateUi();
+                            showNotification('Screen recording started without system audio.', 'info', 3500);
+                            return;
+                        }
+                    }
+                } catch (fallbackError) {
+                    // Fall through to error handler.
+                }
                 stopTracks();
                 state.recorder = null;
                 state.status = 'idle';
@@ -16940,7 +17859,8 @@ function initScreenRecorder() {
                 if (name === 'NotAllowedError' || /permission/i.test(message)) {
                     showNotification('Screen recording failed: Permission denied. Allow screen capture in the browser prompt and try again.', 'error', 5500);
                 } else {
-                    showNotification(`Screen recording failed: ${message}`, 'error', 4500);
+                    const detail = [name, message].filter(Boolean).join(' - ') || 'Unknown error';
+                    showNotification(`Screen recording failed: ${detail}`, 'error', 5500);
                 }
             }
         };
@@ -16962,7 +17882,12 @@ function initScreenRecorder() {
             state.recorder.stop();
         };
 
-        win._screenRecorderControls = { start: startRecording, pause: togglePause, stop: stopRecording };
+        win._screenRecorderControls = {
+            start: startRecording,
+            pause: togglePause,
+            stop: stopRecording,
+            mic: () => setMicEnabled(!state.micEnabled)
+        };
 
         startBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -16975,6 +17900,11 @@ function initScreenRecorder() {
         stopBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             stopRecording();
+        });
+
+        micBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setMicEnabled(!state.micEnabled);
         });
 
         const closeBtn = win.querySelector('.window-control.close');
@@ -17014,7 +17944,10 @@ function initScreenRecorder() {
         }
 
 
-        focusWindow(win);
+        if (!options.hidden) {
+            focusWindow(win);
+        }
+        updateMicUi();
         updateUi();
         (async () => {
             try {
@@ -17027,8 +17960,8 @@ function initScreenRecorder() {
         return win;
     }
 
-    return function openScreenRecorder() {
-        createScreenRecorderWindow();
+    return function openScreenRecorder(options = {}) {
+        return createScreenRecorderWindow(options);
     };
 }
 
@@ -24393,15 +25326,13 @@ function initStartMenu() {
     
     // Applications
     const apps = [
-        { name: 'Settings', path: 'M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0 M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z' },
         { name: 'Files', path: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8' },
         { name: 'Viewer', path: 'M3 3h18v18H3z M8.5 8.5m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0 M21 15l-5-5-11 11' },
         { name: 'Paint', path: 'M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z' },
         { name: 'Calculate', path: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2 M8 6h8 M8 10h2 M12 10h2 M8 14h2 M12 14h2 M8 18h2 M12 18h2' },
         { name: 'Player', path: 'M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20z M10 8l6 4-6 4V8z' },
         { name: 'Editor', path: 'M4 6h16 M4 12h16 M4 18h16' },
-        { name: 'Tasks', path: 'M3 3h18v18H3z M9 3v18 M3 9h18' },
-        { name: 'Capture', path: 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18 M12 8a4 4 0 1 1 0 8a4 4 0 0 1 0-8' }
+        { name: 'Tasks', path: 'M3 3h18v18H3z M9 3v18 M3 9h18' }
     ];
 
     const DOCK_PINNED_APPS_KEY = 'dockPinnedApps';
@@ -24466,8 +25397,30 @@ function initStartMenu() {
         if (!dockApps) return;
         dockApps.querySelectorAll('.dock-item-pinned').forEach(el => el.remove());
 
+        const pinnedKeySet = new Set(pinnedApps.map((name) => normalizeAppKey(name)));
+        const activeIcons = Array.from(dockApps.querySelectorAll('.dock-item-active'));
+        activeIcons.forEach((icon) => {
+            const rawName = icon.dataset.pinnedApp || icon.dataset.appKey || icon.dataset.app || (icon.querySelector('.dock-tooltip') && icon.querySelector('.dock-tooltip').textContent) || '';
+            const normalized = normalizeAppKey(rawName);
+            if (!normalized) return;
+            if (pinnedKeySet.has(normalized)) {
+                const pinnedName = pinnedApps.find((name) => normalizeAppKey(name) === normalized) || rawName;
+                icon.dataset.pinnedApp = pinnedName;
+            } else {
+                try { delete icon.dataset.pinnedApp; } catch (e) {}
+            }
+        });
+
         const insertBefore = dockApps.querySelector('.dock-item:not(.dock-item-pinned)');
         pinnedApps.forEach(name => {
+            const activeIcon = activeIcons.find((icon) => {
+                const rawName = icon.dataset.pinnedApp || icon.dataset.appKey || icon.dataset.app || (icon.querySelector('.dock-tooltip') && icon.querySelector('.dock-tooltip').textContent) || '';
+                return normalizeAppKey(rawName) === normalizeAppKey(name);
+            });
+            if (activeIcon) {
+                activeIcon.dataset.pinnedApp = name;
+                return;
+            }
             const app = apps.find(item => item.name === name);
             if (!app) return;
             const pinnedIcon = document.createElement('div');
@@ -24515,17 +25468,22 @@ function initStartMenu() {
                 launchPinnedApp(item);
             });
             dockApps.addEventListener('contextmenu', (e) => {
-                const item = e.target.closest('.dock-item-pinned');
+                const item = e.target.closest('.dock-item-active, .dock-item-pinned');
                 if (!item) return;
                 e.preventDefault();
                 e.stopPropagation();
                 try {
-                    const name = item.dataset.pinnedApp || (item.querySelector('.dock-tooltip') && item.querySelector('.dock-tooltip').textContent) || null;
+                    const windows = item._windows ? Array.from(item._windows) : [];
+                    let name = item.dataset.pinnedApp || (item.querySelector('.dock-tooltip') && item.querySelector('.dock-tooltip').textContent) || null;
+                    if (!name && windows.length) {
+                        name = getWindowAppKey(windows[0]);
+                    }
                     if (!name) return;
-                    const appObj = (typeof apps !== 'undefined' && Array.isArray(apps)) ? apps.find(a => a.name === name) : null;
-                    if (!appObj) return;
+                    const appObj = findAppByNameLoose(name);
+                    const menuApp = appObj || { name };
+                    const allowPin = !!appObj;
                     const rect = item.getBoundingClientRect();
-                    showStartMenuAppContextMenu(appObj, { controlRect: rect });
+                    showStartMenuAppContextMenu(menuApp, { controlRect: rect, allowClose: true, allowPin, windows });
                 } catch (err) {
                     console.debug('dock delegated contextmenu error', err);
                 }
@@ -24538,17 +25496,79 @@ function initStartMenu() {
     function hideStartMenuAppContextMenu() {
         const existing = document.querySelector('.start-menu-context-menu');
         if (existing) existing.remove();
+        _dockPinnedContextMenuOpen = false;
+    }
+
+    function hidePinnedDockTooltips() {
+        const pinnedItems = document.querySelectorAll('.dock-item-pinned');
+        pinnedItems.forEach((item) => {
+            const tooltip = item._tooltipElement;
+            if (tooltip) {
+                tooltip.style.opacity = '0';
+                tooltip.style.visibility = 'hidden';
+                tooltip.style.transform = 'translateY(6px)';
+            }
+        });
+    }
+
+    function normalizeAppKey(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function findAppByNameLoose(name) {
+        const targetKey = normalizeAppKey(name);
+        if (!targetKey) return null;
+        return apps.find((app) => normalizeAppKey(app.name) === targetKey) || null;
+    }
+
+    function getAppWindowsForMenu(appName) {
+        const targetKey = normalizeAppKey(appName);
+        if (!targetKey) return [];
+        return Array.from(document.querySelectorAll('.window')).filter((win) => {
+            const key = getWindowAppKey(win);
+            const normalizedKey = normalizeAppKey(key || win?.dataset?.appKey || win?.dataset?.appName || win?.dataset?.app);
+            return normalizedKey === targetKey;
+        });
+    }
+
+    function closeAppWindowsByName(appName) {
+        const windows = getAppWindowsForMenu(appName);
+        windows.forEach((win) => {
+            const closeControl = win.querySelector('.window-control.close');
+            if (closeControl) {
+                closeControl.click();
+            } else {
+                win.remove();
+            }
+        });
     }
 
     function showStartMenuAppContextMenu(app, xOrOptions, y) {
         hideStartMenuAppContextMenu();
+        hidePinnedDockTooltips();
         const menu = document.createElement('div');
         menu.className = 'context-menu start-menu-context-menu show';
+        _dockPinnedContextMenuOpen = true;
         const pinned = isAppPinned(app.name);
+        const options = (xOrOptions && typeof xOrOptions === 'object') ? xOrOptions : {};
+        const allowClose = options.allowClose === true;
+        const allowPin = options.allowPin !== false;
+        const directWindows = Array.isArray(options.windows)
+            ? options.windows.filter((win) => win && document.body.contains(win))
+            : [];
+        const appWindows = allowClose && !directWindows.length ? getAppWindowsForMenu(app.name) : [];
+        const closeCount = directWindows.length || appWindows.length;
+        const closeLabel = closeCount > 1 ? 'Close Windows' : 'Close Window';
         const pinSvg = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 10c0 6-9 13-9 13S3 16 3 10a9 9 0 1118 0z"></path>
                 <circle cx="12" cy="10" r="2"></circle>
+            </svg>`;
+
+        const closeSvg = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>`;
 
         const unpinSvg = `
@@ -24559,15 +25579,24 @@ function initStartMenu() {
             </svg>`;
 
         menu.innerHTML = `
+            ${allowPin ? `
             <div class="context-menu-item" data-action="${pinned ? 'unpin' : 'pin'}">
                 <div class="context-menu-icon">${pinned ? unpinSvg : pinSvg}</div>
                 <span>${pinned ? 'Unpin from Dock' : 'Pin to Dock'}</span>
             </div>
+            ` : ''}
+            ${allowClose && closeCount ? `
+            <div class="context-menu-item" data-action="close-windows">
+                <div class="context-menu-icon">${closeSvg}</div>
+                <span>${closeLabel}</span>
+            </div>
+            ` : ''}
         `;
         document.body.appendChild(menu);
 
         const menuWidth = 220;
-        const menuHeight = 120;
+        const baseHeight = allowPin ? 120 : 80;
+        const menuHeight = baseHeight + (allowClose && closeCount ? 40 : 0);
         // If caller passed a control rect (pinned dock icon), center menu on the icon.
         if (xOrOptions && typeof xOrOptions === 'object' && xOrOptions.controlRect) {
             positionDockMenuForControl(menu, xOrOptions.controlRect, { menuWidth, menuHeight });
@@ -24603,6 +25632,22 @@ function initStartMenu() {
         menu.addEventListener('click', (e) => {
             const item = e.target.closest('.context-menu-item');
             if (!item) return;
+            if (item.dataset.action === 'close-windows') {
+                if (directWindows.length) {
+                    directWindows.forEach((win) => {
+                        const closeControl = win.querySelector('.window-control.close');
+                        if (closeControl) {
+                            closeControl.click();
+                        } else {
+                            win.remove();
+                        }
+                    });
+                } else {
+                    closeAppWindowsByName(app.name);
+                }
+                hideStartMenuAppContextMenu();
+                return;
+            }
             if (item.dataset.action === 'pin') {
                 if (!pinnedApps.includes(app.name)) {
                     pinnedApps = [...pinnedApps, app.name];
@@ -24665,11 +25710,6 @@ function initStartMenu() {
             if (openTaskManager) {
                 // Fresh open: center like other apps (do not reuse saved geometry).
                 openTaskManager({ restore: false });
-            }
-        } else if (app.name === 'Capture') {
-            const openRecorder = initScreenRecorder();
-            if (openRecorder) {
-                openRecorder();
             }
         }
     }
@@ -25054,12 +26094,11 @@ function initWeather() {
     const weatherMenu = document.getElementById('weather-menu');
     const weatherControlItem = document.querySelector('.dock-weather');
     const WEATHER_FORECAST_KEY = 'weatherForecast3Day';
+    const WEATHER_PROVIDER_KEY = 'weatherProvider';
     
     if (!weatherIcon || !weatherTemp) return;
     
-    // OpenWeatherMap API Key - Get a free API key from https://openweathermap.org/api
-    // Leave as empty string to use free alternative (wttr.in)
-    const API_KEY = ''; // Replace with your OpenWeatherMap API key for better reliability
+    // wttr.in is the weather provider (no API key required)
     
     // Load cached weather data immediately on initialization
     const WEATHER_ICON_OVERRIDE_KEY = 'weatherIconOverride';
@@ -25108,7 +26147,6 @@ function initWeather() {
 
     const getWeatherMenuLabel = (index) => {
         if (index === 0) return formatWeatherMenuLabel('Today');
-        if (index === 1) return formatWeatherMenuLabel('Tomorrow');
         const date = new Date();
         date.setDate(date.getDate() + index);
         return formatWeatherMenuLabel(date.toLocaleDateString(undefined, { weekday: 'long' }));
@@ -25157,11 +26195,51 @@ function initWeather() {
         return heavyByCode || heavyByAmount ? 'Heavy Rain' : 'Light Rain';
     };
 
-    const saveWeatherForecast = (days, unit) => {
+    const getWeatherProvider = () => localStorage.getItem(WEATHER_PROVIDER_KEY) || '';
+    const setWeatherProvider = (provider) => {
+        if (provider) {
+            localStorage.setItem(WEATHER_PROVIDER_KEY, provider);
+        }
+    };
+
+    const clearStaleWeatherCache = () => {
+        const provider = localStorage.getItem(WEATHER_PROVIDER_KEY);
+        let dataProvider = '';
+        let forecastProvider = '';
+
+        try {
+            const raw = localStorage.getItem('weatherData');
+            const parsed = raw ? JSON.parse(raw) : null;
+            dataProvider = parsed?.provider || '';
+        } catch (e) {
+            dataProvider = '';
+        }
+
+        try {
+            const raw = localStorage.getItem(WEATHER_FORECAST_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            forecastProvider = parsed?.provider || '';
+        } catch (e) {
+            forecastProvider = '';
+        }
+
+        const hasNonWttrProvider = [provider, dataProvider, forecastProvider].some(
+            (value) => value && value !== 'wttr'
+        );
+
+        if (hasNonWttrProvider) {
+            localStorage.removeItem('weatherData');
+            localStorage.removeItem(WEATHER_FORECAST_KEY);
+            localStorage.setItem(WEATHER_PROVIDER_KEY, 'wttr');
+        }
+    };
+
+    const saveWeatherForecast = (days, unit, provider) => {
         if (!Array.isArray(days)) return;
         const payload = {
             unit: unit || localStorage.getItem('weatherUnit') || 'F',
             timestamp: Date.now(),
+            provider: provider || getWeatherProvider() || '',
             days
         };
         localStorage.setItem(WEATHER_FORECAST_KEY, JSON.stringify(payload));
@@ -25194,11 +26272,20 @@ function initWeather() {
         if (!weatherMenuEls) return;
         const locationName = localStorage.getItem('weatherLocationName');
         if (weatherMenuEls.location) {
-            weatherMenuEls.location.textContent = locationName && locationName.trim()
-                ? locationName
-                : 'Weather';
+            const trimmedLocation = locationName ? locationName.trim() : '';
+            if (trimmedLocation) {
+                weatherMenuEls.location.textContent = trimmedLocation;
+                weatherMenuEls.location.style.display = '';
+            } else {
+                weatherMenuEls.location.textContent = '';
+                weatherMenuEls.location.style.display = 'none';
+            }
         }
-        const forecast = loadWeatherForecast();
+        const provider = getWeatherProvider();
+        let forecast = loadWeatherForecast();
+        if (forecast && forecast.provider && provider && forecast.provider !== provider) {
+            forecast = null;
+        }
         const unit = forecast?.unit || localStorage.getItem('weatherUnit') || 'F';
         let fallbackWeather = null;
         try {
@@ -25296,11 +26383,12 @@ function initWeather() {
     }
     
     // Save weather data to cache
-    function saveWeatherData(temp, conditionCode, unit = 'F') {
+    function saveWeatherData(temp, conditionCode, unit = 'F', provider = '') {
         const weatherData = {
             temp: temp,
             conditionCode: conditionCode,
             unit: unit,
+            provider: provider,
             timestamp: Date.now()
         };
         localStorage.setItem('weatherData', JSON.stringify(weatherData));
@@ -25334,11 +26422,12 @@ function initWeather() {
         return;
     }
     
+    clearStaleWeatherCache();
     // Load cached weather immediately - this ensures we never show empty weather
     const hasCachedWeather = loadCachedWeather();
     
     
-    // Weather icon mapping based on OpenWeatherMap condition codes
+    // Weather icon mapping based on standard condition codes
     function getWeatherIcon(conditionCode) {
         // Clear sky
         if (conditionCode === 800) {
@@ -25528,117 +26617,11 @@ function initWeather() {
                 iconCode
             };
         });
-        saveWeatherForecast(days, unit);
-    }
-
-    function updateWeatherForecastFromOpenWeather(lat, lon, unit) {
-        if (!API_KEY || API_KEY === '') return;
-        const urls = [
-            `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=imperial`,
-            `http://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=imperial`
-        ];
-        fetchJsonWithFallback(urls)
-            .then(data => {
-                if (!data || !Array.isArray(data.list)) return;
-                const now = new Date();
-                now.setHours(0, 0, 0, 0);
-                const dailyMap = new Map();
-                data.list.forEach(entry => {
-                    const entryDate = new Date(entry.dt * 1000);
-                    if (entryDate < now) return;
-                    const dateKey = entryDate.toDateString();
-                    if (!dailyMap.has(dateKey)) {
-                        dailyMap.set(dateKey, []);
-                    }
-                    dailyMap.get(dateKey).push(entry);
-                });
-                const days = [];
-                for (const [dateKey, entries] of dailyMap) {
-                    if (days.length >= 3) break;
-                    let high = null;
-                    let low = null;
-                    let bestEntry = entries[0];
-                    let bestDiff = Infinity;
-                    entries.forEach(entry => {
-                        const temp = Number(entry.main?.temp);
-                        if (Number.isFinite(temp)) {
-                            high = high === null ? temp : Math.max(high, temp);
-                            low = low === null ? temp : Math.min(low, temp);
-                        }
-                        const entryDate = new Date(entry.dt * 1000);
-                        const diff = Math.abs(entryDate.getHours() - 12);
-                        if (diff < bestDiff) {
-                            bestDiff = diff;
-                            bestEntry = entry;
-                        }
-                    });
-                    const rawDesc = bestEntry?.weather?.[0]?.description || '';
-                    const desc = rawDesc.toLowerCase();
-                    const iconCode = Number(bestEntry?.weather?.[0]?.id) || getStandardConditionCode(desc, 800);
-                    const rainVolume = Number(bestEntry?.rain?.['3h'] ?? bestEntry?.rain?.['1h']);
-                    const rainLabel = getRainIntensityLabel({
-                        rawDesc,
-                        code: Number(bestEntry?.weather?.[0]?.id) || 0,
-                        rainVolume: Number.isFinite(rainVolume) ? rainVolume : null
-                    });
-                    const convertedHigh = unit === 'C' && high !== null ? (high - 32) * 5 / 9 : high;
-                    const convertedLow = unit === 'C' && low !== null ? (low - 32) * 5 / 9 : low;
-                    days.push({
-                        high: convertedHigh === null ? null : Math.round(convertedHigh),
-                        low: convertedLow === null ? null : Math.round(convertedLow),
-                        desc: rainLabel || formatWeatherConditionText(rawDesc),
-                        iconCode
-                    });
-                }
-                if (days.length) {
-                    saveWeatherForecast(days, unit);
-                }
-            })
-            .catch(() => {
-                // Ignore forecast errors to keep current weather working.
-            });
+        saveWeatherForecast(days, unit, 'wttr');
     }
     
     function updateWeather(lat, lon) {
-        // Use OpenWeatherMap if API key is provided, otherwise use free alternative
-        if (API_KEY && API_KEY !== '') {
-            const urls = [
-                `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=imperial`,
-                `http://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=imperial`
-            ];
-            
-            fetchJsonWithFallback(urls)
-                .then(data => {
-                    const temp = Math.round(data.main.temp);
-                    const conditionCode = data.weather[0].id;
-                    const conditionText = data.weather[0]?.description || '';
-                    const region = data.sys?.state || data.sys?.region || data.sys?.country || '';
-                    setWeatherLocationName(data.name, region);
-                    
-                    // Determine unit based on location
-                    determineTemperatureUnit(lat, lon).then(unit => {
-                        // Only update if we successfully got new data
-                        weatherTemp.textContent = `${temp}° ${unit}`;
-                        setWeatherConditionText(conditionText || getWeatherConditionLabelFromCode(conditionCode));
-                        const overrideCode = getWeatherIconOverride();
-                        const iconCode = overrideCode !== null ? overrideCode : conditionCode;
-                        weatherIcon.innerHTML = getWeatherIcon(iconCode);
-                        
-                        // Save to cache for next load
-                        saveWeatherData(temp, conditionCode, unit);
-                        updateWeatherForecastFromOpenWeather(lat, lon, unit);
-                        updateWeatherMenu();
-                    });
-                })
-                .catch(error => {
-                    console.error('Error fetching weather:', error);
-                    // Fallback to free API, but don't clear existing data
-                    updateWeatherFree(lat, lon);
-                });
-        } else {
-            // Use free weather API (wttr.in)
-            updateWeatherFree(lat, lon);
-        }
+        updateWeatherFree(lat, lon);
     }
     
     // Determine temperature unit based on country
@@ -25705,25 +26688,20 @@ function initWeather() {
         }
         return null;
     }
-    
+
     function updateWeatherFree(lat, lon) {
         // Use wttr.in free weather API (no API key required)
-        // Note: wttr.in may have rate limits, but works without API key
-        // Include location coordinates in the API call
-        // Try with coordinates first, fallback to IP-based if that fails
         const urls = [
             `https://wttr.in/${lat},${lon}?format=j1`,
             `http://wttr.in/${lat},${lon}?format=j1`
         ];
-        
-        
+
         // Determine temperature unit first, then fetch weather
         determineTemperatureUnit(lat, lon).then(unit => {
             const isFahrenheit = unit === 'F';
-            
+
             fetchJsonWithFallback(urls)
                 .then(data => {
-                    
                     // Check if data is valid
                     if (!data || !data.current_condition || !data.current_condition[0]) {
                         throw new Error('Invalid weather data format');
@@ -25734,15 +26712,14 @@ function initWeather() {
                         const region = area.region?.[0]?.value || area.state?.[0]?.value;
                         setWeatherLocationName(city, region);
                     }
-                    
+
                     // Get temperature in the appropriate unit
-                    const temp = isFahrenheit 
+                    const temp = isFahrenheit
                         ? Math.round(parseFloat(data.current_condition[0].temp_F))
                         : Math.round(parseFloat(data.current_condition[0].temp_C));
                     const conditionCode = parseInt(data.current_condition[0].weatherCode);
                     const desc = data.current_condition[0].weatherDesc[0].value.toLowerCase();
-                    
-                    
+
                     // Only update if we successfully got new data
                     if (weatherTemp) {
                         weatherTemp.textContent = `${temp}° ${unit}`;
@@ -25760,9 +26737,11 @@ function initWeather() {
                     // Convert wttr.in condition to standard code for caching
                     const standardConditionCode = getStandardConditionCode(desc, conditionCode);
                     setWeatherConditionText(desc || getWeatherConditionLabelFromCode(standardConditionCode));
-                    
+
+                    setWeatherProvider('wttr');
+
                     // Save to cache for next load (include unit)
-                    saveWeatherData(temp, standardConditionCode, unit);
+                    saveWeatherData(temp, standardConditionCode, unit, 'wttr');
                     updateWeatherForecastFromWttr(data, unit);
                     updateWeatherMenu();
                 })
@@ -25778,12 +26757,11 @@ function initWeather() {
             console.error('Error determining temperature unit:', error);
             // Fallback: try to fetch weather anyway with default unit
             const defaultUnit = localStorage.getItem('weatherUnit') || 'F';
-            const isFahrenheit = defaultUnit === 'F';
             const urls = [
                 `https://wttr.in/${lat},${lon}?format=j1`,
                 `http://wttr.in/${lat},${lon}?format=j1`
             ];
-            
+
             fetchJsonWithFallback(urls)
                 .then(data => {
                     const area = data.nearest_area?.[0];
@@ -25792,12 +26770,12 @@ function initWeather() {
                         const region = area.region?.[0]?.value || area.state?.[0]?.value;
                         setWeatherLocationName(city, region);
                     }
-                    const temp = isFahrenheit 
+                    const temp = defaultUnit === 'F'
                         ? Math.round(parseFloat(data.current_condition[0].temp_F))
                         : Math.round(parseFloat(data.current_condition[0].temp_C));
                     const conditionCode = parseInt(data.current_condition[0].weatherCode);
                     const desc = data.current_condition[0].weatherDesc[0].value.toLowerCase();
-                    
+
                     weatherTemp.textContent = `${temp}° ${defaultUnit}`;
                     const overrideCode = getWeatherIconOverride();
                     if (overrideCode !== null) {
@@ -25808,8 +26786,9 @@ function initWeather() {
                     }
                     const standardConditionCode = getStandardConditionCode(desc, conditionCode);
                     setWeatherConditionText(desc || getWeatherConditionLabelFromCode(standardConditionCode));
-                    
-                    saveWeatherData(temp, standardConditionCode, defaultUnit);
+
+                    setWeatherProvider('wttr');
+                    saveWeatherData(temp, standardConditionCode, defaultUnit, 'wttr');
                     updateWeatherForecastFromWttr(data, defaultUnit);
                     updateWeatherMenu();
                 })
@@ -25822,7 +26801,7 @@ function initWeather() {
                 });
         });
     }
-
+    
     if (weatherControlItem && weatherMenu && !weatherControlItem.hasAttribute('data-weather-menu')) {
         weatherControlItem.setAttribute('data-weather-menu', 'true');
 
@@ -25917,6 +26896,15 @@ function initWeather() {
         }
     }
     
+    function startWeatherUpdateInterval(lat, lon) {
+        if (window.weatherUpdateInterval) {
+            clearInterval(window.weatherUpdateInterval);
+        }
+        window.weatherUpdateInterval = setInterval(() => {
+            updateWeather(lat, lon);
+        }, 5 * 60 * 1000); // Update every 5 minutes
+    }
+
     function getLocation() {
         if (!navigator.geolocation) {
             console.error('Geolocation is not supported');
@@ -25957,12 +26945,7 @@ function initWeather() {
                 try {
                     const { lat, lon } = JSON.parse(cachedLocation);
                     updateWeather(lat, lon);
-                    // Set up interval for updates
-                    if (!window.weatherUpdateInterval) {
-                        window.weatherUpdateInterval = setInterval(() => {
-                            updateWeather(lat, lon);
-                        }, 5 * 60 * 1000); // Update every 5 minutes
-                    }
+                    startWeatherUpdateInterval(lat, lon);
                     return;
                 } catch (e) {
                     // Invalid cached data, continue to get fresh location
@@ -26146,12 +27129,7 @@ function initWeather() {
                                 }
                             });
                         }
-                        // Set up interval for updates
-                        if (!window.weatherUpdateInterval) {
-                            window.weatherUpdateInterval = setInterval(() => {
-                                updateWeather(lat, lon);
-                            }, 5 * 60 * 1000); // Update every 5 minutes
-                        }
+                        startWeatherUpdateInterval(lat, lon);
                         return;
                     } catch (e) {
                         // Invalid cached data, continue to request new location
@@ -26220,13 +27198,7 @@ function initWeather() {
                     }
                 });
                 
-                // Update weather every 5 minutes
-                if (window.weatherUpdateInterval) {
-                    clearInterval(window.weatherUpdateInterval);
-                }
-                window.weatherUpdateInterval = setInterval(() => {
-                    updateWeather(lat, lon);
-                }, 5 * 60 * 1000); // Update every 5 minutes
+                startWeatherUpdateInterval(lat, lon);
             },
             error => {
                 // Clear the flag on error
@@ -27204,6 +28176,22 @@ async function captureViewportPngBlob({ sanitize = false } = {}) {
     return blob;
 }
 
+async function captureViewportNativePngBlob() {
+    if (!window.pilkOSCapture || typeof window.pilkOSCapture.captureWindow !== 'function') {
+        return null;
+    }
+    const dataUrl = await window.pilkOSCapture.captureWindow();
+    if (!dataUrl || typeof dataUrl !== 'string') return null;
+    try {
+        const response = await fetch(dataUrl);
+        if (!response.ok) return null;
+        const blob = await response.blob();
+        return blob || null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function getLoggedInUsername() {
     const loggedInUser = localStorage.getItem('loggedInUser');
     if (!loggedInUser) return null;
@@ -27276,9 +28264,13 @@ async function takeViewportScreenshotToPictures() {
         const filename = getScreenshotFileName();
         let blob;
         try {
-            // file:// origins are extremely prone to canvas tainting; start in sanitized mode there.
-            const isFileProtocol = window.location && window.location.protocol === 'file:';
-            blob = await captureViewportPngBlob({ sanitize: isFileProtocol ? true : false });
+            // Prefer native capture when available to avoid html2canvas rendering artifacts.
+            blob = await captureViewportNativePngBlob();
+            if (!blob) {
+                // file:// origins are extremely prone to canvas tainting; start in sanitized mode there.
+                const isFileProtocol = window.location && window.location.protocol === 'file:';
+                blob = await captureViewportPngBlob({ sanitize: isFileProtocol ? true : false });
+            }
         } catch (e) {
             // If canvas is tainted, retry with a sanitized capture that strips cross-origin images/backgrounds.
             const msg = (e && e.message) ? String(e.message) : String(e);
@@ -28132,19 +29124,62 @@ function initQuickSettings() {
         if (!quickRecorderTile || !quickRecorderControls.length) return;
         const win = getActiveRecorderWindow();
         const enabled = !!win;
-        quickRecorderControls.forEach(btn => {
-            btn.disabled = !enabled;
-        });
-        if (!enabled) return;
-        const state = win._screenRecorderState || {};
+        const state = win ? (win._screenRecorderState || {}) : {};
+        const isMicAllowed = (() => {
+            try {
+                return localStorage.getItem('privacyMicrophone') !== 'false';
+            } catch (e) {
+                return true;
+            }
+        })();
+
         const startBtn = quickRecorderTile.querySelector('[data-recorder-action="start"]');
         const pauseBtn = quickRecorderTile.querySelector('[data-recorder-action="pause"]');
         const stopBtn = quickRecorderTile.querySelector('[data-recorder-action="stop"]');
+        const micBtn = quickRecorderTile.querySelector('[data-recorder-action="mic"]');
+
+        if (!enabled) {
+            if (startBtn) startBtn.disabled = false;
+            if (pauseBtn) pauseBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = true;
+            if (micBtn) {
+                micBtn.disabled = !isMicAllowed;
+                micBtn.classList.toggle('active', false);
+                micBtn.setAttribute('aria-pressed', 'false');
+                const micOn = micBtn.querySelector('.mic-on');
+                const micOff = micBtn.querySelector('.mic-off');
+                if (micOn) micOn.style.display = 'block';
+                if (micOff) micOff.style.display = 'none';
+            }
+            return;
+        }
+
         const isRecording = state.status === 'recording';
         const isPaused = state.status === 'paused';
-        if (startBtn) startBtn.disabled = isRecording;
+        if (startBtn) startBtn.disabled = state.status !== 'idle';
         if (pauseBtn) pauseBtn.disabled = !isRecording && !isPaused;
         if (stopBtn) stopBtn.disabled = !isRecording && !isPaused;
+        if (micBtn) {
+            micBtn.disabled = !isMicAllowed;
+            const micEnabled = !!state.micEnabled;
+            micBtn.classList.toggle('active', micEnabled);
+            micBtn.setAttribute('aria-pressed', micEnabled ? 'true' : 'false');
+            const micOn = micBtn.querySelector('.mic-on');
+            const micOff = micBtn.querySelector('.mic-off');
+            if (micOn) micOn.style.display = micEnabled ? 'block' : 'none';
+            if (micOff) micOff.style.display = micEnabled ? 'none' : 'block';
+        }
+        if (pauseBtn) {
+            const pauseLabel = isPaused ? 'Resume' : 'Pause';
+            pauseBtn.setAttribute('aria-label', pauseLabel);
+            pauseBtn.removeAttribute('title');
+            const pauseIcon = pauseBtn.querySelector('.recorder-icon-pause');
+            const resumeIcon = pauseBtn.querySelector('.recorder-icon-resume');
+            if (pauseIcon) pauseIcon.style.display = isPaused ? 'none' : 'block';
+            if (resumeIcon) resumeIcon.style.display = isPaused ? 'block' : 'none';
+            const tooltipEl = pauseBtn._tooltipElement;
+            if (tooltipEl) tooltipEl.textContent = pauseLabel;
+        }
     }
 
     function isTileRemovable(tile) {
@@ -28409,8 +29444,7 @@ function initQuickSettings() {
             setupNavButtonTooltip(btn, label);
         });
         quickRecorderControls.forEach((btn) => {
-            const label = btn.getAttribute('aria-label') || btn.textContent || 'Capture';
-            setupNavButtonTooltip(btn, label);
+            setupNavButtonTooltip(btn, () => btn.getAttribute('aria-label') || btn.textContent || 'Capture');
         });
     }
 
@@ -28435,18 +29469,53 @@ function initQuickSettings() {
         });
     }
 
-    if (quickRecorderControls.length) {
-        quickRecorderControls.forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const action = btn.dataset.recorderAction;
-                const win = getActiveRecorderWindow();
-                if (!action || !win || !win._screenRecorderControls) return;
+    function openRecorderFromQuickSettings() {
+        const openRecorder = initScreenRecorder();
+        if (typeof openRecorder === 'function') {
+            return openRecorder({ hidden: true, skipDock: true });
+        }
+        return null;
+    }
+
+    function runQuickRecorderAction(action) {
+        if (!action) return;
+        let win = getActiveRecorderWindow();
+        if (!win) {
+            win = openRecorderFromQuickSettings();
+            if (win && win._screenRecorderControls) {
                 const handler = win._screenRecorderControls[action];
                 if (typeof handler === 'function') {
                     handler();
                 }
                 updateQuickRecorderControls();
+                return;
+            }
+            setTimeout(() => {
+                const retryWin = getActiveRecorderWindow();
+                if (!retryWin || !retryWin._screenRecorderControls) return;
+                const handler = retryWin._screenRecorderControls[action];
+                if (typeof handler === 'function') {
+                    handler();
+                }
+                updateQuickRecorderControls();
+            }, 160);
+            return;
+        }
+
+        if (!win._screenRecorderControls) return;
+        const handler = win._screenRecorderControls[action];
+        if (typeof handler === 'function') {
+            handler();
+        }
+        updateQuickRecorderControls();
+    }
+
+    if (quickRecorderControls.length) {
+        quickRecorderControls.forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.recorderAction;
+                runQuickRecorderAction(action);
             });
         });
     }
@@ -29617,7 +30686,7 @@ function initQuickSettings() {
     updateQuickSettingsPanel();
 }
 
-// Virtual Desktops (Task View)
+// Spaces (Task View)
 const VIRTUAL_DESKTOP_STATE_STORAGE_KEY = 'virtualDesktopState';
 const VIRTUAL_DESKTOP_WINDOW_MAP_STORAGE_KEY = 'virtualDesktopWindowMap';
 let virtualDesktopState = null;
@@ -30093,10 +31162,15 @@ function initVirtualDesktops() {
         virtualDesktopOverlay.id = 'virtual-desktop-overlay';
         virtualDesktopOverlay.className = 'virtual-desktop-overlay';
         virtualDesktopOverlay.innerHTML = `
-            <div class="virtual-desktop-panel" role="dialog" aria-label="Virtual Desktops">
+            <div class="virtual-desktop-panel" role="dialog" aria-label="Spaces">
                 <div class="virtual-desktop-header">
-                    <div class="virtual-desktop-title">Virtual Desktops</div>
-                    <button class="virtual-desktop-add" type="button">New desktop</button>
+                    <div class="virtual-desktop-title">Spaces</div>
+                    <button class="virtual-desktop-add" type="button" aria-label="New space">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
                 </div>
                 <div class="virtual-desktop-list" role="list"></div>
             </div>

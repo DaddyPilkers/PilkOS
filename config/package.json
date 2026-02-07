@@ -1,6 +1,6 @@
 {
   "name": "pilkos",
-  "version": "0.1.34",
+  "version": "0.1.45",
   "description": "PilkOS desktop experience in Electron.",
   "main": "../src/main.js",
   "author": "",
@@ -30,7 +30,8 @@
   },
   "build": {
     "appId": "com.pilkos.app",
-    "productName": "PilkOS v${version}",
+    "productName": "PilkOS",
+    "artifactName": "${productName} v${version}.${ext}",
     "extraMetadata": {
       "main": "src/main.js"
     },

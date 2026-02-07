@@ -18,9 +18,13 @@ if "%CURRENT_VERSION%"=="" (
 	exit /b 1
 )
 choice /c MNP /m "Select build type: [M]ajor, Mi[N]or, [P]atch"
-if errorlevel 3 set BUILD_TYPE=patch
-if errorlevel 2 set BUILD_TYPE=minor
-if errorlevel 1 set BUILD_TYPE=major
+if errorlevel 3 (
+	set BUILD_TYPE=patch
+) else if errorlevel 2 (
+	set BUILD_TYPE=minor
+) else (
+	set BUILD_TYPE=major
+)
 for /f "delims=" %%v in ('powershell -NoProfile -Command "$v='%CURRENT_VERSION%'; $type='%BUILD_TYPE%'; $parts=$v.Split('.'); $major=[int]$parts[0]; $minor=[int]$parts[1]; $patch=[int]$parts[2]; switch ($type) { 'major' { $major++; $minor=0; $patch=0 } 'minor' { $minor++; $patch=0 } default { $patch++ } }; Write-Output \"$major.$minor.$patch\""') do set NEW_VERSION=%%v
 if "%NEW_VERSION%"=="" (
 	echo Version calculation failed.
@@ -62,10 +66,34 @@ choice /m "Publish GitHub release now?"
 if errorlevel 2 (
 	echo Release publish skipped by user.
 ) else (
+	set SKIP_RELEASE=
 	where gh >nul 2>nul
 	if errorlevel 1 (
-		echo GitHub CLI not found. Install gh and login to publish releases.
-	) else (
+		where winget >nul 2>nul
+		if errorlevel 1 (
+			echo GitHub CLI not found and winget is unavailable.
+			echo Install GitHub CLI manually: https://cli.github.com/
+			set SKIP_RELEASE=1
+		)
+		echo Installing GitHub CLI...
+		winget install --id GitHub.cli -e --source winget
+		if errorlevel 1 (
+			echo GitHub CLI install failed. Install manually: https://cli.github.com/
+			set SKIP_RELEASE=1
+		)
+	)
+	if not defined SKIP_RELEASE (
+		gh auth status >nul 2>nul
+		if errorlevel 1 (
+			echo GitHub CLI not logged in. Starting login...
+			gh auth login
+			if errorlevel 1 (
+				echo GitHub CLI login failed. Skipping release publish.
+				set SKIP_RELEASE=1
+			)
+		)
+	)
+	if not defined SKIP_RELEASE (
 		set RELEASE_EXE=..\release\PilkOS v%APP_VERSION%.exe
 		set RELEASE_BLOCKMAP=..\release\PilkOS v%APP_VERSION%.exe.blockmap
 		set RELEASE_LATEST=..\release\latest.yml
