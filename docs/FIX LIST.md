@@ -51,7 +51,6 @@ SETTINGS
     ABOUT (FOOTER)
         SOFTWARE UPDATER
         - Redesign panel in Settings app.
-        - Software Updates don't seem to be detected.
 
 FILES
 -

@@ -12,7 +12,7 @@ const wifi = require('node-wifi');
 let mainWindow;
 
 const UPDATE_REPO = {
-  owner: 'CruelSenpai',
+  owner: 'DaddyPilkers',
   repo: 'PilkOS',
 };
 
@@ -294,6 +294,26 @@ async function createMainWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
+  // Append "(Dev Build)" to the titlebar in development (npm start) only
+  if (isDev) {
+    const devSuffix = ' (Dev Build)';
+    // Prevent page title updates from replacing our dev suffix and set the title
+    mainWindow.webContents.on('page-title-updated', (event, title) => {
+      try {
+        event.preventDefault();
+        const next = (typeof title === 'string' && title.length > 0) ? title + devSuffix : 'PilkOS' + devSuffix;
+        mainWindow.setTitle(next);
+      } catch (error) {
+        // Ignore title update errors in dev mode
+      }
+    });
+    try {
+      const initial = mainWindow.getTitle() || 'PilkOS';
+      mainWindow.setTitle(initial + devSuffix);
+    } catch (error) {
+      // Ignore
+    }
+  }
   mainWindow.webContents.on('preload-error', (event, preloadPathValue, error) => {
     preloadStatus.error = {
       path: preloadPathValue || preloadStatus.path,
